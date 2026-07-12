@@ -25,45 +25,6 @@ JNI helper for hot-path sysfs reads.
   broadly portable (Adreno/Mali/MediaTek GPUs are all handled), but frequency
   control itself is Qualcomm-only.
 
-## Building
-
-```bash
-./gradlew assembleDebug     # unsigned debug build
-./gradlew assembleRelease   # signed release build
-```
-
-The release build type reads a signing config from `gradle.properties`
-(`RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
-`RELEASE_KEY_PASSWORD`). Provide your own keystore before building a release
-APK, or supply these as CI secrets instead of committing real credentials.
-
-A GitHub Actions workflow (`.github/workflows/build.yml`) builds both
-variants on every push to `main`/`master` and uploads them as artifacts.
-
-## Project layout
-
-```
-app/src/main/java/com/thermaloverlay/overlay/
-├── MainActivity.kt          # start/stop overlay, permissions, root check
-├── OverlayService.kt        # foreground service keeping the HUD alive
-├── OverlayTileService.kt    # Quick Settings tile
-├── freqcontrol/             # CPU/GPU frequency control screen
-├── metrics/                 # CPU/GPU/battery/FPS/swap readers
-├── shell/                   # root shell wrapper + sysfs read/write helpers
-├── ui/                      # the floating HUD window and its custom views
-└── utils/                   # small platform-compat helpers
-```
-
-## Permissions
-
-- `SYSTEM_ALERT_WINDOW` — draw the floating HUD over other apps.
-- `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_SPECIAL_USE` — keep the HUD
-  running in the background.
-- `POST_NOTIFICATIONS` — required for the foreground service's notification
-  on Android 13+.
-- Root (`su`) — required for reading/writing most of the sysfs nodes this
-  app uses.
-
 ## Disclaimer
 
 This app reads and writes low-level kernel interfaces on a rooted device.
