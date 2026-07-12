@@ -1,0 +1,56 @@
+<resources>
+    <string name="app_name">ThermalOverlay</string>
+    <string name="app_subtitle">Оверлей производительности</string>
+    <string name="permission_float">Разрешите отображение поверх других окон, чтобы включить оверлей</string>
+
+    <string name="start_overlay">Запустить</string>
+    <string name="stop_overlay">Отключить</string>
+    <string name="grant_permission">Выдать разрешение</string>
+
+    <string name="status_enabled">Оверлей включён</string>
+    <string name="status_disabled">Оверлей выключен</string>
+    <string name="status_no_permission">Нужно разрешение "Поверх других окон"</string>
+
+    <string name="root_warning">Root-доступ не обнаружен. Оверлей не сможет получать данные CPU/GPU/DDR — все метрики читаются через root-shell.</string>
+    <string name="root_checking">Проверка root-доступа…</string>
+
+    <string name="dual_battery_label">Двойная батарея</string>
+    <string name="dual_battery_desc">Удваивает показатель #PWR для устройств с двумя аккумуляторными ячейками</string>
+
+    <string name="notification_channel_name">ThermalOverlay HUD</string>
+    <string name="notification_title">Оверлей производительности активен</string>
+    <string name="tile_label">Оверлей</string>
+
+    <string name="freq_control_button">Регуляция частот (Qualcomm)</string>
+    <string name="freq_control_title">Регуляция частот</string>
+    <string name="freq_control_subtitle">CPU-кластеры и GPU — root, только Qualcomm (policy0/3/4/6/7)</string>
+
+    <string name="freq_governor_label">Governor</string>
+    <string name="freq_min_label">Мин. частота</string>
+    <string name="freq_max_label">Макс. частота</string>
+
+    <string name="cluster_little_title">Little (policy0)</string>
+    <string name="cluster_big_title">Big (policy%1$d)</string>
+    <string name="cluster_prime_title">Prime (policy7)</string>
+    <string name="cluster_current_freq">тек.: %1$d МГц</string>
+
+    <string name="freq_gpu_title">GPU (Adreno / kgsl-3d0)</string>
+    <string name="freq_adreno_boost_label">Adreno Boost</string>
+    <string name="freq_adreno_boost_off">Выкл.</string>
+    <string name="freq_adreno_boost_low">Низкий</string>
+    <string name="freq_adreno_boost_medium">Средний</string>
+    <string name="freq_adreno_boost_high">Высокий</string>
+
+    <string name="freq_pwrlevel_title">Pwrlevel</string>
+    <string name="freq_pwrlevel_default">default_pwrlevel</string>
+    <string name="freq_pwrlevel_bounds">pwrlevel: min=%1$d max=%2$d</string>
+    <string name="freq_apply">Применить</string>
+    <string name="freq_gpu_throttling_label">GPU Throttling(снижает нагрев)</string>
+
+    <string name="freq_cpu_boost_title">CPU Boost</string>
+    <string name="freq_input_boost_ms_label">Input Boost (мс)</string>
+    <string name="freq_sched_boost_input_label">Sched Boost on Input</string>
+
+    <string name="freq_applied_toast">Применено</string>
+    <string name="freq_write_failed_toast">Не удалось применить (нет root или узел read-only)</string>
+</resources>

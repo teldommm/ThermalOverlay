@@ -1,0 +1,6 @@
+<resources>
+    <declare-styleable name="RamInfo">
+        <attr name="total" format="integer" />
+        <attr name="free" format="integer" />
+    </declare-styleable>
+</resources>

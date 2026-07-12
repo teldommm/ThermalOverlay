@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.ThermalOverlay" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/bg_dark</item>
+        <item name="colorAccent">@color/accent</item>
+    </style>
+</resources>

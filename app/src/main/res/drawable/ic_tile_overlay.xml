@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Quick Settings tile icon: two overlapping rectangles, a metaphor for
+     "window over window" (an overlay). Single-color as required for QS
+     tiles; Android tints it for active/inactive state. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?android:attr/colorControlNormal">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M3,4 L15,4 L15,14 L3,14 Z M5,6 L5,12 L13,12 L13,6 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M9,10 L21,10 L21,20 L9,20 Z M11,12 L11,18 L19,18 L19,12 Z" />
+</vector>
