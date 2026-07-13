@@ -175,10 +175,12 @@ class FreqControlActivity : AppCompatActivity() {
                 ClusterSnapshot(
                     holder = holder,
                     curFreq = FreqControlUtils.readFreqMHz(holder.paths.curFreq),
+                    // availFreq/curMinFreq/curMaxFreq are in kHz: spinner values must
+                    // round-trip to sysfs exactly, so no MHz conversion here.
                     availFreq = FreqControlUtils.readAvailableFreqWithBoost(holder.paths.availFreq, holder.paths.availBoost),
                     availGov = FreqControlUtils.readAvailableGovernors(holder.paths.availGov),
-                    curMinFreq = FreqControlUtils.readFreqMHz(holder.paths.minFreq),
-                    curMaxFreq = FreqControlUtils.readFreqMHz(holder.paths.maxFreq),
+                    curMinFreq = FreqControlUtils.readFreqKHz(holder.paths.minFreq),
+                    curMaxFreq = FreqControlUtils.readFreqKHz(holder.paths.maxFreq),
                     curGov = FreqControlUtils.readGovernor(holder.paths.gov),
                 )
             }
@@ -251,6 +253,9 @@ class FreqControlActivity : AppCompatActivity() {
         private val spinner: Spinner,
         private val values: List<T>,
         initialIndex: Int,
+        // Optional fallback when the real value isn't in the list (e.g. the
+        // kernel clamped a frequency). Returns the index to select, or -1.
+        private val nearestIndex: ((T) -> Int)? = null,
     ) {
         var lastAppliedIndex: Int = initialIndex
             private set
@@ -258,7 +263,11 @@ class FreqControlActivity : AppCompatActivity() {
         fun shouldWrite(position: Int): Boolean = position != lastAppliedIndex
 
         fun applyRealValue(value: T) {
-            val idx = values.indexOf(value).let { if (it >= 0) it else lastAppliedIndex }
+            val exact = values.indexOf(value)
+            val idx = when {
+                exact >= 0 -> exact
+                else -> nearestIndex?.invoke(value)?.takeIf { it >= 0 } ?: lastAppliedIndex
+            }
             lastAppliedIndex = idx
             spinner.setSelection(idx, false)
         }
@@ -306,18 +315,18 @@ class FreqControlActivity : AppCompatActivity() {
         var minController: SpinnerController<Int>? = null
         var maxController: SpinnerController<Int>? = null
         val refreshMinMax: () -> Unit = {
-            val minMhz = FreqControlUtils.readFreqMHz(s.holder.paths.minFreq)
-            val maxMhz = FreqControlUtils.readFreqMHz(s.holder.paths.maxFreq)
+            val minKhz = FreqControlUtils.readFreqKHz(s.holder.paths.minFreq)
+            val maxKhz = FreqControlUtils.readFreqKHz(s.holder.paths.maxFreq)
             mainHandler.post {
-                minController?.applyRealValue(minMhz)
-                maxController?.applyRealValue(maxMhz)
+                minController?.applyRealValue(minKhz)
+                maxController?.applyRealValue(maxKhz)
             }
         }
-        minController = setupFreqSpinner(s.holder.minFreqSpinner, s.availFreq, s.curMinFreq, refreshMinMax) { mhz ->
-            FreqControlUtils.writeFreqCPU(s.holder.paths.minFreq, mhz)
+        minController = setupFreqSpinner(s.holder.minFreqSpinner, s.availFreq, s.curMinFreq, ::cpuFreqLabel, refreshMinMax) { khz ->
+            FreqControlUtils.writeFreqCPU(s.holder.paths.minFreq, khz)
         }
-        maxController = setupFreqSpinner(s.holder.maxFreqSpinner, s.availFreq, s.curMaxFreq, refreshMinMax) { mhz ->
-            FreqControlUtils.writeFreqCPU(s.holder.paths.maxFreq, mhz)
+        maxController = setupFreqSpinner(s.holder.maxFreqSpinner, s.availFreq, s.curMaxFreq, ::cpuFreqLabel, refreshMinMax) { khz ->
+            FreqControlUtils.writeFreqCPU(s.holder.paths.maxFreq, khz)
         }
         s.holder.minController = minController
         s.holder.maxController = maxController
@@ -347,10 +356,10 @@ class FreqControlActivity : AppCompatActivity() {
                 maxController?.applyRealValue(maxMhz)
             }
         }
-        minController = setupFreqSpinner(root.findViewById(R.id.gpu_spinner_min_freq), s.availFreq, s.curMinFreq, refreshMinMax) { mhz ->
+        minController = setupFreqSpinner(root.findViewById(R.id.gpu_spinner_min_freq), s.availFreq, s.curMinFreq, ::gpuFreqLabel, refreshMinMax) { mhz ->
             FreqControlUtils.writeFreqGPU(FreqControlUtils.MIN_FREQ_GPU, mhz)
         }
-        maxController = setupFreqSpinner(root.findViewById(R.id.gpu_spinner_max_freq), s.availFreq, s.curMaxFreq, refreshMinMax) { mhz ->
+        maxController = setupFreqSpinner(root.findViewById(R.id.gpu_spinner_max_freq), s.availFreq, s.curMaxFreq, ::gpuFreqLabel, refreshMinMax) { mhz ->
             FreqControlUtils.writeFreqGPU(FreqControlUtils.MAX_FREQ_GPU, mhz)
         }
         gpuMinController = minController
@@ -485,10 +494,20 @@ class FreqControlActivity : AppCompatActivity() {
         )
     }
 
+    // CPU spinner values are in kHz (sysfs native unit); label shows MHz,
+    // with one decimal when the value isn't a whole MHz (1804800 -> 1804.8 MHz).
+    private fun cpuFreqLabel(khz: Int): String =
+        if (khz % 1000 == 0) "${khz / 1000} MHz"
+        else String.format(java.util.Locale.US, "%.1f MHz", khz / 1000.0)
+
+    // GPU spinner values are already in MHz (kgsl exposes *_clock_mhz nodes).
+    private fun gpuFreqLabel(mhz: Int): String = "$mhz MHz"
+
     private fun setupFreqSpinner(
         spinner: Spinner,
         available: List<Int>,
         current: Int,
+        labelOf: (Int) -> String,
         afterWrite: () -> Unit,
         onSelected: (Int) -> FreqControlUtils.WriteResult,
     ): SpinnerController<Int>? {
@@ -497,12 +516,15 @@ class FreqControlActivity : AppCompatActivity() {
             spinner.isEnabled = false
             return null
         }
-        val labels = available.map { "$it MHz" }
+        val labels = available.map(labelOf)
         spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
-        val initialIndex = available.indexOf(current).let { if (it >= 0) it else 0 }
+        val nearest: (Int) -> Int = { value ->
+            available.indices.minByOrNull { kotlin.math.abs(available[it] - value) } ?: -1
+        }
+        val initialIndex = available.indexOf(current).let { if (it >= 0) it else nearest(current) }
         spinner.setSelection(initialIndex, false)
 
-        val controller = SpinnerController(spinner, available, initialIndex)
+        val controller = SpinnerController(spinner, available, initialIndex, nearest)
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (!controller.shouldWrite(position)) return
@@ -581,8 +603,8 @@ class FreqControlActivity : AppCompatActivity() {
             val clusterReads = clusterHolders.map { holder ->
                 holder to ClusterLiveRead(
                     curFreq = FreqControlUtils.readFreqMHz(holder.paths.curFreq),
-                    minFreq = FreqControlUtils.readFreqMHz(holder.paths.minFreq),
-                    maxFreq = FreqControlUtils.readFreqMHz(holder.paths.maxFreq),
+                    minFreq = FreqControlUtils.readFreqKHz(holder.paths.minFreq),
+                    maxFreq = FreqControlUtils.readFreqKHz(holder.paths.maxFreq),
                     gov = FreqControlUtils.readGovernor(holder.paths.gov),
                 )
             }

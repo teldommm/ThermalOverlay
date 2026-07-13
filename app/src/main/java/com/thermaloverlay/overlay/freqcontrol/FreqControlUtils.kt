@@ -154,16 +154,24 @@ object FreqControlUtils {
         return raw.toIntOrNull()?.let { it / 1000 } ?: 0
     }
 
-    fun readAvailableFreqMHz(path: String): List<Int> {
+    // CPU frequencies are handled in kHz end-to-end (sysfs native unit).
+    // Converting to whole MHz loses the remainder (e.g. 1804800 kHz -> 1804 MHz),
+    // and writing 1804000 back makes cpufreq clamp max_freq DOWN a full step.
+    fun readFreqKHz(path: String): Int {
+        val raw = readRaw(path)
+        return raw.toIntOrNull() ?: 0
+    }
+
+    fun readAvailableFreqKHz(path: String): List<Int> {
         val raw = readRaw(path)
         if (raw.isEmpty()) return emptyList()
-        return raw.split(Regex("\\s+")).mapNotNull { it.toIntOrNull()?.div(1000) }
+        return raw.split(Regex("\\s+")).mapNotNull { it.toIntOrNull() }
     }
 
     fun readAvailableFreqWithBoost(freqPath: String, boostPath: String?): List<Int> {
-        val base = readAvailableFreqMHz(freqPath)
-        if (boostPath == null) return base
-        val boost = readAvailableFreqMHz(boostPath)
+        val base = readAvailableFreqKHz(freqPath)
+        if (boostPath == null) return base.distinct().sorted()
+        val boost = readAvailableFreqKHz(boostPath)
         return (base + boost).distinct().sorted()
     }
 
@@ -196,8 +204,8 @@ object FreqControlUtils {
     private fun writeNode(path: String, value: String): WriteResult =
         if (RootFile.writeFile(path, value)) WriteResult.OK else WriteResult.FAILED
 
-    fun writeFreqCPU(path: String, mhz: Int): WriteResult =
-        writeNode(path, (mhz * 1000).toString())
+    fun writeFreqCPU(path: String, khz: Int): WriteResult =
+        writeNode(path, khz.toString())
 
     fun writeGovernor(path: String, governor: String): WriteResult =
         writeNode(path, governor)
