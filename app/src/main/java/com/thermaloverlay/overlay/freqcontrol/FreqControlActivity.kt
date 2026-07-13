@@ -47,11 +47,15 @@ class FreqControlActivity : AppCompatActivity() {
         val hasGpu: Boolean,
         val hasCpuInputBoostMs: Boolean,
         val hasCpuSchedBoostOnInput: Boolean,
+        val coreCount: Int,
     )
 
     private val clusterHolders = mutableListOf<ClusterHolder>()
     private var gpuRoot: View? = null
     private var cpuBoostRoot: View? = null
+    private var coreRoot: View? = null
+    private val coreViews = mutableListOf<TextView>()
+    private var coreOnlineState: List<Boolean> = emptyList()
 
     private var gpuMinController: SpinnerController<Int>? = null
     private var gpuMaxController: SpinnerController<Int>? = null
@@ -74,6 +78,7 @@ class FreqControlActivity : AppCompatActivity() {
 
         val clusterContainer = findViewById<LinearLayout>(R.id.cluster_container)
         val cpuBoostContainer = findViewById<LinearLayout>(R.id.cpu_boost_container)
+        val coreContainer = findViewById<LinearLayout>(R.id.core_container)
         val gpuContainer = findViewById<LinearLayout>(R.id.gpu_container)
 
         Thread({
@@ -86,16 +91,19 @@ class FreqControlActivity : AppCompatActivity() {
                     hasGpu = FreqControlUtils.hasGpu(),
                     hasCpuInputBoostMs = FreqControlUtils.hasCpuInputBoostMs(),
                     hasCpuSchedBoostOnInput = FreqControlUtils.hasCpuSchedBoostOnInput(),
+                    coreCount = FreqControlUtils.cpuCoreCount(),
                 )
             } catch (ex: Exception) {
                 Detection(
                     hasBigCluster = false, bigPolicy = 0, hasPrimeCluster = false,
                     hasGpu = false, hasCpuInputBoostMs = false, hasCpuSchedBoostOnInput = false,
+                    coreCount = 0,
                 )
             }
             mainHandler.post {
                 buildClusterCards(clusterContainer, detection)
                 buildCpuBoostCard(cpuBoostContainer, detection)
+                buildCoreCard(coreContainer, detection)
                 buildGpuCard(gpuContainer, detection)
                 loadAllAsync()
             }
@@ -157,6 +165,13 @@ class FreqControlActivity : AppCompatActivity() {
         gpuRoot = view
     }
 
+    private fun buildCoreCard(container: LinearLayout, detection: Detection) {
+        if (detection.coreCount <= 1) return
+        val view = LayoutInflater.from(this).inflate(R.layout.view_core_control, container, false)
+        container.addView(view)
+        coreRoot = view
+    }
+
     private fun buildCpuBoostCard(container: LinearLayout, detection: Detection) {
         if (!detection.hasCpuInputBoostMs && !detection.hasCpuSchedBoostOnInput) return
 
@@ -203,6 +218,16 @@ class FreqControlActivity : AppCompatActivity() {
                 null
             }
 
+            val coreSnapshot = if (coreRoot != null) {
+                val n = FreqControlUtils.cpuCoreCount()
+                CoreSnapshot(
+                    online = FreqControlUtils.readAllCoresOnline(),
+                    toggleable = (0 until n).map { FreqControlUtils.isCoreToggleable(it) },
+                )
+            } else {
+                null
+            }
+
             val cpuBoostSnapshot = if (cpuBoostRoot != null) {
                 CpuBoostSnapshot(
                     inputBoostMs = FreqControlUtils.readIntNode(FreqControlUtils.CPU_INPUT_BOOST_MS),
@@ -214,6 +239,7 @@ class FreqControlActivity : AppCompatActivity() {
 
             mainHandler.post {
                 snapshot.forEach { bindClusterSnapshot(it) }
+                coreSnapshot?.let { bindCoreSnapshot(it) }
                 gpuSnapshot?.let { bindGpuSnapshot(it) }
                 cpuBoostSnapshot?.let { bindCpuBoostSnapshot(it) }
             }
@@ -247,6 +273,11 @@ class FreqControlActivity : AppCompatActivity() {
     private data class CpuBoostSnapshot(
         val inputBoostMs: Int?,
         val schedBoostEnabled: Boolean,
+    )
+
+    private data class CoreSnapshot(
+        val online: List<Boolean>,
+        val toggleable: List<Boolean>,
     )
 
     private class SpinnerController<T>(
@@ -339,6 +370,67 @@ class FreqControlActivity : AppCompatActivity() {
             FreqControlUtils.writeGovernor(s.holder.paths.gov, gov)
         }
         s.holder.govController = govController
+    }
+
+    private fun bindCoreSnapshot(s: CoreSnapshot) {
+        val root = coreRoot ?: return
+        val row = root.findViewById<LinearLayout>(R.id.core_toggle_container)
+        row.removeAllViews()
+        coreViews.clear()
+
+        val density = resources.displayMetrics.density
+        val height = (40 * density).toInt()
+        val margin = (3 * density).toInt()
+
+        s.online.indices.forEach { core ->
+            val toggleable = s.toggleable.getOrElse(core) { false }
+            val tv = TextView(this).apply {
+                text = core.toString()
+                gravity = android.view.Gravity.CENTER
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                // cpu0 (or any core without an "online" node) can't be
+                // offlined by the kernel — show it dimmed and non-clickable.
+                alpha = if (toggleable) 1f else 0.45f
+                isEnabled = toggleable
+                if (toggleable) {
+                    setOnClickListener { onCoreTapped(core) }
+                }
+            }
+            val lp = LinearLayout.LayoutParams(0, height, 1f)
+            lp.setMargins(margin, 0, margin, 0)
+            row.addView(tv, lp)
+            coreViews.add(tv)
+        }
+        applyCoreStates(s.online)
+    }
+
+    private fun onCoreTapped(core: Int) {
+        val current = coreOnlineState.getOrElse(core) { true }
+        val target = !current
+        // The kernel refuses to offline the last online core anyway, but
+        // guard in the UI so the user gets a clear message instead of a
+        // generic write failure.
+        if (!target && coreOnlineState.count { it } <= 1) {
+            Toast.makeText(this, R.string.freq_core_last_toast, Toast.LENGTH_SHORT).show()
+            return
+        }
+        writeInBackground(
+            action = { FreqControlUtils.writeCoreOnline(core, target) },
+            afterWrite = {
+                val states = FreqControlUtils.readAllCoresOnline()
+                mainHandler.post { applyCoreStates(states) }
+            },
+        )
+    }
+
+    private fun applyCoreStates(states: List<Boolean>) {
+        coreOnlineState = states
+        coreViews.forEachIndexed { i, tv ->
+            val on = states.getOrElse(i) { true }
+            tv.setBackgroundResource(if (on) R.drawable.bg_core_on else R.drawable.bg_core_off)
+            tv.setTextColor(getColor(if (on) R.color.text_primary else R.color.text_secondary))
+        }
     }
 
     private fun bindGpuSnapshot(s: GpuSnapshot) {
@@ -494,11 +586,9 @@ class FreqControlActivity : AppCompatActivity() {
         )
     }
 
-    // CPU spinner values are in kHz (sysfs native unit); label shows MHz,
-    // with one decimal when the value isn't a whole MHz (1804800 -> 1804.8 MHz).
-    private fun cpuFreqLabel(khz: Int): String =
-        if (khz % 1000 == 0) "${khz / 1000} MHz"
-        else String.format(java.util.Locale.US, "%.1f MHz", khz / 1000.0)
+    // CPU spinner values are in kHz (sysfs native unit, written back exactly);
+    // the label truncates to whole MHz for display only (1999600 kHz -> 1999 MHz).
+    private fun cpuFreqLabel(khz: Int): String = "${khz / 1000} MHz"
 
     // GPU spinner values are already in MHz (kgsl exposes *_clock_mhz nodes).
     private fun gpuFreqLabel(mhz: Int): String = "$mhz MHz"
@@ -594,7 +684,7 @@ class FreqControlActivity : AppCompatActivity() {
     private data class CpuBoostLiveRead(val inputBoostMs: Int?, val schedBoostEnabled: Boolean)
 
     private fun refreshLiveStateAsync() {
-        if (clusterHolders.isEmpty() && gpuRoot == null && cpuBoostRoot == null) {
+        if (clusterHolders.isEmpty() && gpuRoot == null && cpuBoostRoot == null && coreRoot == null) {
 
             scheduleNextLiveRefresh()
             return
@@ -627,6 +717,9 @@ class FreqControlActivity : AppCompatActivity() {
                     schedBoostEnabled = FreqControlUtils.readCpuSchedBoostOnInputEnabled(),
                 )
             } else null
+            val coreRead = if (coreRoot != null && coreViews.isNotEmpty()) {
+                FreqControlUtils.readAllCoresOnline()
+            } else null
 
             mainHandler.post {
                 clusterReads.forEach { (holder, read) ->
@@ -654,6 +747,7 @@ class FreqControlActivity : AppCompatActivity() {
                     }
                     cpuBoostSchedController?.applyRealValue(b.schedBoostEnabled)
                 }
+                coreRead?.let { applyCoreStates(it) }
 
                 scheduleNextLiveRefresh()
             }

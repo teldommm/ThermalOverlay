@@ -32,7 +32,7 @@
     <string name="cluster_little_title">Little (policy0)</string>
     <string name="cluster_big_title">Big (policy%1$d)</string>
     <string name="cluster_prime_title">Prime (policy7)</string>
-    <string name="cluster_current_freq">cur: %1$d MHz</string>
+    <string name="cluster_current_freq">%1$d MHz</string>
 
     <string name="freq_gpu_title">GPU (Adreno / kgsl-3d0)</string>
     <string name="freq_adreno_boost_label">Adreno Boost</string>
@@ -50,6 +50,10 @@
     <string name="freq_cpu_boost_title">CPU Boost</string>
     <string name="freq_input_boost_ms_label">Input Boost (ms)</string>
     <string name="freq_sched_boost_input_label">Sched Boost on Input</string>
+
+    <string name="freq_cores_title">CPU cores</string>
+    <string name="freq_cores_hint">Tap a core to bring it online or offline</string>
+    <string name="freq_core_last_toast">Can&#8217;t take the last online core offline</string>
 
     <string name="freq_applied_toast">Applied</string>
     <string name="freq_write_failed_toast">Failed to apply (no root, or the node is read-only)</string>

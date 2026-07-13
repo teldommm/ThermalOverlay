@@ -227,4 +227,38 @@ object FreqControlUtils {
 
     fun writeCpuSchedBoostOnInput(enabled: Boolean): WriteResult =
         writeNode(CPU_SCHED_BOOST_ON_INPUT, if (enabled) "1" else "0")
+
+    // --- CPU core hotplug (online/offline) ---
+
+    private fun coreOnlinePath(core: Int) = "/sys/devices/system/cpu/cpu$core/online"
+
+    private var cachedCoreCount: Int = -1
+    fun cpuCoreCount(): Int {
+        if (cachedCoreCount != -1) return cachedCoreCount
+        // "present" looks like "0-7"; parse the upper bound. Fall back to the
+        // JVM view (may under-report if cores are already offline, so it is
+        // only a last resort).
+        val raw = readRaw("/sys/devices/system/cpu/present")
+        val count = raw.substringAfterLast('-').toIntOrNull()?.plus(1)
+            ?: Runtime.getRuntime().availableProcessors()
+        cachedCoreCount = count
+        return count
+    }
+
+    // cpu0 usually has no "online" node (the boot core can't be offlined);
+    // cache the existence checks since each one is a root-shell round trip.
+    private val cachedCoreToggleable = HashMap<Int, Boolean>()
+    fun isCoreToggleable(core: Int): Boolean =
+        cachedCoreToggleable.getOrPut(core) { fileExists(coreOnlinePath(core)) }
+
+    fun readCoreOnline(core: Int): Boolean {
+        if (!isCoreToggleable(core)) return true
+        return readRaw(coreOnlinePath(core)) == "1"
+    }
+
+    fun readAllCoresOnline(): List<Boolean> =
+        (0 until cpuCoreCount()).map { readCoreOnline(it) }
+
+    fun writeCoreOnline(core: Int, online: Boolean): WriteResult =
+        writeNode(coreOnlinePath(core), if (online) "1" else "0")
 }
