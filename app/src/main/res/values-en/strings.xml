@@ -56,5 +56,5 @@
     <string name="freq_core_last_toast">Can&#8217;t take the last online core offline</string>
 
     <string name="freq_applied_toast">Applied</string>
-    <string name="freq_write_failed_toast">Failed to apply (no root, or the node is read-only)</string>
+    <string name="freq_write_failed_toast">Failed to apply (node is read-only)</string>
 </resources>

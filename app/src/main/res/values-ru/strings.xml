@@ -45,7 +45,7 @@
     <string name="freq_pwrlevel_default">default_pwrlevel</string>
     <string name="freq_pwrlevel_bounds">pwrlevel: min=%1$d max=%2$d</string>
     <string name="freq_apply">Применить</string>
-    <string name="freq_gpu_throttling_label">GPU Throttling(снижает нагрев)</string>
+    <string name="freq_gpu_throttling_label">GPU Throttling (снижает нагрев)</string>
 
     <string name="freq_cpu_boost_title">CPU Boost</string>
     <string name="freq_input_boost_ms_label">Input Boost (мс)</string>
@@ -56,5 +56,5 @@
     <string name="freq_core_last_toast">Нельзя отключить последнее активное ядро</string>
 
     <string name="freq_applied_toast">Применено</string>
-    <string name="freq_write_failed_toast">Не удалось применить (нет root или узел read-only)</string>
+    <string name="freq_write_failed_toast">Не удалось применить (узел read-only)</string>
 </resources>
