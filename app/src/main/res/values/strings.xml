@@ -32,7 +32,7 @@
     <string name="cluster_little_title">Little (policy0)</string>
     <string name="cluster_big_title">Big (policy%1$d)</string>
     <string name="cluster_prime_title">Prime (policy7)</string>
-    <string name="cluster_current_freq">%1$d MHz</string>
+    <string name="cluster_current_freq">cur: %1$d MHz</string>
 
     <string name="freq_gpu_title">GPU (Adreno / kgsl-3d0)</string>
     <string name="freq_adreno_boost_label">Adreno Boost</string>
