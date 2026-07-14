@@ -335,7 +335,17 @@ class FloatMonitor(private val mContext: Context) {
                                 otherInfos.append("\n")
                                 val load = loads[coreIndex]
 
-                                val loadStr = if (load != null) "${load.toInt()}%" else "×"
+                                // load == null means the core is offline (it
+                                // disappears from /proc/stat): show "×" in both
+                                // columns and skip the pointless freq read.
+                                if (load == null) {
+                                    otherInfos.append("×".padStart(4))
+                                    otherInfos.append("  ")
+                                    otherInfos.append("×")
+                                    continue
+                                }
+
+                                val loadStr = "${load.toInt()}%"
                                 otherInfos.append(loadStr.padStart(4))
                                 otherInfos.append("  ")
 
@@ -344,8 +354,7 @@ class FloatMonitor(private val mContext: Context) {
                                     cyclesMhz
                                 } else {
                                     val coreFreq = subFreqStr(cpuFrequencyUtils.getCoreCurrentFrequency(core)).toIntOrNull()
-                                    val loadInt = load?.toInt() ?: 0
-                                    if (coreFreq != null) coreFreq * loadInt / 100 else null
+                                    if (coreFreq != null) coreFreq * load.toInt() / 100 else null
                                 }
 
                                 val mhzStr = if (displayMhz != null) "${displayMhz}M" else "--"

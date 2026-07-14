@@ -31,11 +31,18 @@ object CpuCyclesUtils {
         if (!hasSimpleperf()) return
 
         KeepShellPublic.doCmdSync("pkill -f \"$CYC_SIG\" 2>/dev/null")
+        // Remove a stale results file so a fresh stream never serves values
+        // recorded before a restart (e.g. with a different set of online cores).
+        KeepShellPublic.doCmdSync("rm -f $CYC_FILE 2>/dev/null")
 
         val cmd = "nohup sh -c \"simpleperf stat -a -e cpu-cycles --per-core --interval $INTERVAL_MS " +
             "--interval-only-values --duration 999999 2>&1 | awk -v out=$CYC_FILE -v sig=$CYC_SIG '" +
             "/cpu-cycles/ { c=\\\$1+0; for(i=1;i<=NF;i++) if(\\\$i==\\\"#\\\"){ g=\\\$(i+1)+0; break }; m[c]=int(g*1000+0.5) } " +
-            "/Total test time/ { s=\\\"\\\"; for(k=0;k<8;k++) s=s (k?\\\",\\\":\\\"\\\") (m[k]+0); print s > out; close(out) }" +
+            // The array is cleared after every interval: without this, a core
+            // that went offline keeps printing its last value forever (frozen
+            // MHz in the HUD). A zero makes the app fall back to the
+            // freq*load estimate instead.
+            "/Total test time/ { s=\\\"\\\"; for(k=0;k<8;k++) s=s (k?\\\",\\\":\\\"\\\") (m[k]+0); print s > out; close(out); for(j in m) delete m[j] }" +
             "'\" >/dev/null 2>&1 &"
 
         KeepShellPublic.doCmdSync(cmd)
@@ -57,6 +64,21 @@ object CpuCyclesUtils {
     fun cleanupOrphans() {
         if (streamStarted) return
         KeepShellPublic.doCmdSync("pkill -f \"$CYC_SIG\" 2>/dev/null")
+    }
+
+    /**
+     * Restarts the stream after a CPU core is hotplugged on/off. simpleperf
+     * opens its perf events once at launch, so a re-onlined core never gets a
+     * counter again in the running instance — the stream must be relaunched.
+     * It is stopped here and lazily restarted by the next
+     * getPerCoreCyclesMhz() call.
+     */
+    @Synchronized
+    fun restartAfterCoreHotplug() {
+        if (!streamStarted) return
+        KeepShellPublic.doCmdSync("pkill -f \"$CYC_SIG\" 2>/dev/null")
+        KeepShellPublic.doCmdSync("rm -f $CYC_FILE 2>/dev/null")
+        streamStarted = false
     }
 
     fun getPerCoreCyclesMhz(): List<Int>? {

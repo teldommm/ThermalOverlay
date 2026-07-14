@@ -418,6 +418,10 @@ class FreqControlActivity : AppCompatActivity() {
         writeInBackground(
             action = { FreqControlUtils.writeCoreOnline(core, target) },
             afterWrite = {
+                // simpleperf (per-core MHz in the overlay's detailed view)
+                // opens perf events once at launch and never picks up a
+                // re-onlined core — restart the stream after any hotplug.
+                com.thermaloverlay.overlay.metrics.CpuCyclesUtils.restartAfterCoreHotplug()
                 val states = FreqControlUtils.readAllCoresOnline()
                 mainHandler.post { applyCoreStates(states) }
             },
