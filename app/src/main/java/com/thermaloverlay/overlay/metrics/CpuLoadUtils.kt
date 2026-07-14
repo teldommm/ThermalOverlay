@@ -5,7 +5,7 @@
 package com.thermaloverlay.overlay.metrics
 
 import com.thermaloverlay.overlay.shell.KeepShellPublic
-import java.io.File
+import com.thermaloverlay.overlay.shell.KernelProrp
 
 class CpuLoadUtils {
 
@@ -13,18 +13,6 @@ class CpuLoadUtils {
     private var lastCpuStateSum: String = ""
     private var lastCpuStateMap: HashMap<Int, Double>? = null
     private var lastCpuStateTime: Long = 0L
-
-    // /proc/stat is world-readable — no need to spawn a root-shell subprocess
-    // for it on every tick.
-    private fun readProcStatCpuLines(aggregateOnly: Boolean): String {
-        return try {
-            File("/proc/stat").readLines()
-                .filter { if (aggregateOnly) it.startsWith("cpu ") else it.startsWith("cpu") }
-                .joinToString("\n")
-        } catch (ex: Exception) {
-            ""
-        }
-    }
 
     private fun getCpuIndex(cols: List<String>): Int {
         return if (cols[0] == "cpu") -1 else cols[0].substring(3).toInt()
@@ -48,7 +36,7 @@ class CpuLoadUtils {
             }
 
             val loads = HashMap<Int, Double>()
-            val times = readProcStatCpuLines(aggregateOnly = false)
+            val times = KernelProrp.getProp("/proc/stat", "^cpu")
             if (times != "error" && times.startsWith("cpu")) {
                 try {
                     if (lastCpuState.isEmpty()) {
@@ -107,7 +95,7 @@ class CpuLoadUtils {
                 }
             }
 
-            val times = readProcStatCpuLines(aggregateOnly = true)
+            val times = KernelProrp.getProp("/proc/stat", "^cpu ")
             if (times != "error" && times.startsWith("cpu")) {
                 try {
                     if (lastCpuStateSum.isEmpty()) {
