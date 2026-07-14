@@ -5,7 +5,7 @@
 package com.thermaloverlay.overlay.metrics
 
 import com.thermaloverlay.overlay.shell.KeepShellPublic
-import com.thermaloverlay.overlay.shell.KernelProrp
+import java.io.File
 
 class CpuLoadUtils {
 
@@ -13,6 +13,18 @@ class CpuLoadUtils {
     private var lastCpuStateSum: String = ""
     private var lastCpuStateMap: HashMap<Int, Double>? = null
     private var lastCpuStateTime: Long = 0L
+
+    // /proc/stat is world-readable — no need to spawn a root-shell subprocess
+    // for it on every tick.
+    private fun readProcStatCpuLines(aggregateOnly: Boolean): String {
+        return try {
+            File("/proc/stat").readLines()
+                .filter { if (aggregateOnly) it.startsWith("cpu ") else it.startsWith("cpu") }
+                .joinToString("\n")
+        } catch (ex: Exception) {
+            ""
+        }
+    }
 
     private fun getCpuIndex(cols: List<String>): Int {
         return if (cols[0] == "cpu") -1 else cols[0].substring(3).toInt()
@@ -36,7 +48,7 @@ class CpuLoadUtils {
             }
 
             val loads = HashMap<Int, Double>()
-            val times = KernelProrp.getProp("/proc/stat", "^cpu")
+            val times = readProcStatCpuLines(aggregateOnly = false)
             if (times != "error" && times.startsWith("cpu")) {
                 try {
                     if (lastCpuState.isEmpty()) {
@@ -95,7 +107,7 @@ class CpuLoadUtils {
                 }
             }
 
-            val times = KernelProrp.getProp("/proc/stat", "^cpu ")
+            val times = readProcStatCpuLines(aggregateOnly = true)
             if (times != "error" && times.startsWith("cpu")) {
                 try {
                     if (lastCpuStateSum.isEmpty()) {
@@ -135,19 +147,34 @@ class CpuLoadUtils {
             return -1.0
         }
 
-    fun getCpuTemperatureText(): String {
-        val cmd = "awk '" +
-            "FNR==1 { " +
-            "z=FILENAME; sub(/\\/type$/,\"\",z); " +
-            "if (\$0 ~ /cpu-0/) { " +
-            "tf=z\"/temp\"; if ((getline t < tf) > 0) { if (t+0>m) m=t+0 } close(tf); " +
-            "} " +
-            "} " +
-            "END { if (m>1000) printf \"%.1f\", m/1000; else print 0 }" +
-            "' /sys/class/thermal/thermal_zone*/type 2>/dev/null"
+    // Resolved once: the awk scan opens every thermal_zone*/type (often 100+
+    // files on modern phones). After the first pass we only cat the matching
+    // temp nodes. Empty results are not cached so a pre-root first tick
+    // retries later.
+    private var cpuTempPaths: List<String>? = null
 
-        val result = KeepShellPublic.doCmdSync(cmd).trim()
-        val value = result.toDoubleOrNull()
-        return if (value != null && value > 0) String.format("%.1f°C", value) else "--"
+    fun getCpuTemperatureText(): String {
+        var paths = cpuTempPaths
+        if (paths == null) {
+            val out = KeepShellPublic.doCmdSync(
+                "grep -l 'cpu-0' /sys/class/thermal/thermal_zone*/type 2>/dev/null"
+            ).trim()
+            if (out.isNotEmpty() && out != "error") {
+                paths = out.split("\n")
+                    .map { it.trim() }
+                    .filter { it.endsWith("/type") }
+                    .map { it.removeSuffix("/type") + "/temp" }
+                if (paths.isNotEmpty()) cpuTempPaths = paths
+            }
+        }
+        if (paths.isNullOrEmpty()) return "--"
+
+        val raw = KeepShellPublic.doCmdSync("cat ${paths.joinToString(" ")} 2>/dev/null").trim()
+        if (raw.isEmpty() || raw == "error") return "--"
+        val maxMilli = raw.split("\n").mapNotNull { it.trim().toDoubleOrNull() }.maxOrNull() ?: return "--"
+        // Same semantics as the old awk: values are millidegrees; anything
+        // <= 1000 is treated as invalid.
+        if (maxMilli <= 1000) return "--"
+        return String.format("%.1f°C", maxMilli / 1000)
     }
 }

@@ -48,6 +48,17 @@ object CpuCyclesUtils {
         streamStarted = false
     }
 
+    /**
+     * Kills a stream orphaned by a previous process death (the nohup'ed
+     * simpleperf pipeline outlives the app). Call on service start, from a
+     * background thread.
+     */
+    @Synchronized
+    fun cleanupOrphans() {
+        if (streamStarted) return
+        KeepShellPublic.doCmdSync("pkill -f \"$CYC_SIG\" 2>/dev/null")
+    }
+
     fun getPerCoreCyclesMhz(): List<Int>? {
         ensureStreamStarted()
         if (simpleperfAvailable != true) return null

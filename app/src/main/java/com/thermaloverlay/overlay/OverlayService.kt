@@ -12,6 +12,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.thermaloverlay.overlay.metrics.CpuCyclesUtils
 import com.thermaloverlay.overlay.ui.FloatMonitor
 
 class OverlayService : Service() {
@@ -20,6 +21,10 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForeground(NOTIFICATION_ID, buildNotification())
+
+        // Kill a simpleperf stream orphaned by a previous process death
+        // (shell call — must not run on the main thread).
+        Thread { CpuCyclesUtils.cleanupOrphans() }.start()
 
         if (!FloatMonitor.show) {
             floatMonitor = FloatMonitor(this)

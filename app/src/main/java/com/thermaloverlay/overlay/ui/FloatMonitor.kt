@@ -6,7 +6,10 @@ package com.thermaloverlay.overlay.ui
 
 import android.annotation.SuppressLint
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.os.BatteryManager
 import android.os.Build
@@ -150,8 +153,14 @@ class FloatMonitor(private val mContext: Context) {
             })
 
             startTimer()
+            registerScreenReceiver()
             return true
         } catch (ex: Exception) {
+            // If addView failed (e.g. the overlay permission was revoked while
+            // the service was running), reset the flag — otherwise every later
+            // showPopupWindow() returns true without a window and the overlay
+            // can never be shown again until the process dies.
+            show = false
             Toast.makeText(mContext, "FloatMonitor Error\n" + ex.message, Toast.LENGTH_LONG).show()
             return false
         }
@@ -160,6 +169,46 @@ class FloatMonitor(private val mContext: Context) {
     private fun stopTimer() {
         timer?.cancel()
         timer = null
+    }
+
+    private var screenReceiver: BroadcastReceiver? = null
+
+    // The overlay is invisible while the screen is off, but the timer kept
+    // polling the root shell (and dumpsys/simpleperf in detailed mode),
+    // preventing the device from resting. Pause everything on SCREEN_OFF.
+    private fun registerScreenReceiver() {
+        if (screenReceiver != null) return
+        screenReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        stopTimer()
+                        Thread { CpuCyclesUtils.stopStream() }.start()
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        if (show) startTimer()
+                    }
+                }
+            }
+        }
+        try {
+            mContext.registerReceiver(screenReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            })
+        } catch (ex: Exception) {
+            screenReceiver = null
+        }
+    }
+
+    private fun unregisterScreenReceiver() {
+        screenReceiver?.let {
+            try {
+                mContext.unregisterReceiver(it)
+            } catch (ex: Exception) {
+            }
+        }
+        screenReceiver = null
     }
 
     private fun subFreqStr(freq: String?): String {
@@ -205,6 +254,11 @@ class FloatMonitor(private val mContext: Context) {
     private fun updateInfo() {
         if (coreCount < 1) {
             coreCount = cpuFrequencyUtils.getCoreCount()
+        }
+        // Retried separately from coreCount: on first launch the su prompt may
+        // not be confirmed yet, so cluster info can come back empty while the
+        // core count (plain File.exists, no root) already succeeded.
+        if (clusters.isEmpty()) {
             clusters = cpuFrequencyUtils.getClusterInfo()
         }
         clustersFreq.clear()
@@ -238,10 +292,11 @@ class FloatMonitor(private val mContext: Context) {
         val dualBatteryMultiplier = if (OverlayPrefs.isDualBattery(mContext)) 2 else 1
         val batteryCurrentNowMa = batteryCurrentNow?.let { (it / BatteryStatusReader.currentUnitDivisor) * dualBatteryMultiplier }
 
-        val gpuMemoryUsage = GpuUtils.getMemoryUsage()
-
         val otherInfoBuilder = SpannableStringBuilder()
         if (showOtherInfo) {
+            // Read GPU memory only here: it's a shell call per tick and the
+            // value is not shown anywhere in compact mode.
+            val gpuMemoryUsage = GpuUtils.getMemoryUsage()
             totalMem = (info.totalMem / 1024 / 1024f).toInt()
             availMem = (info.availMem / 1024 / 1024f).toInt()
             val swapPercent = SwapUtils.getZramFillPercent()
@@ -325,42 +380,57 @@ class FloatMonitor(private val mContext: Context) {
         val temperature = BatteryStatusReader.temperatureCurrent
 
         myHandler.post {
-            if (showOtherInfo) {
-                otherInfo?.text = null
-                otherInfo?.text = otherInfoBuilder
-            }
+            // Guarded: an exception here runs on the main thread and would
+            // crash the whole app (views may already be detached mid-hide).
+            try {
+                if (showOtherInfo) {
+                    otherInfo?.text = null
+                    otherInfo?.text = otherInfoBuilder
+                }
 
-            cpuChart!!.setData(100f, (100 - cpuLoad).toFloat())
-            cpuFreqText!!.text = subFreqStr(cpuFreq) + "Mhz"
+                cpuChart!!.setData(100f, (100 - cpuLoad).toFloat())
+                cpuFreqText!!.text = subFreqStr(cpuFreq) + "Mhz"
 
-            gpuFreqText!!.text = gpuFreq
-            if (gpuLoad > -1) {
-                gpuChart!!.setData(100f, (100f - gpuLoad))
-            }
+                gpuFreqText!!.text = gpuFreq
+                if (gpuLoad > -1) {
+                    gpuChart!!.setData(100f, (100f - gpuLoad))
+                }
 
-            temperatureChart!!.setData(100.0, 100.0 - BatteryStatusReader.batteryCapacity, temperature)
-            temperatureText!!.text = "$temperature°C"
-            batteryLevelText!!.text = "${BatteryStatusReader.batteryCapacity}%"
-            chargerView!!.visibility = if (BatteryStatusReader.batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING) {
-                View.VISIBLE
-            } else {
-                View.GONE
+                temperatureChart!!.setData(100.0, 100.0 - BatteryStatusReader.batteryCapacity, temperature)
+                temperatureText!!.text = "$temperature°C"
+                batteryLevelText!!.text = "${BatteryStatusReader.batteryCapacity}%"
+                chargerView!!.visibility = if (BatteryStatusReader.batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING) {
+                    View.VISIBLE
+                } else {
+                    View.GONE
+                }
+            } catch (ex: Exception) {
             }
         }
     }
 
     private fun startTimer() {
         stopTimer()
+        // Detailed mode benefits from faster updates; compact mode is fine at
+        // 2s, cutting the number of shell round trips by a quarter.
+        val interval = if (showOtherInfo) 1500L else 2000L
         timer = Timer()
         timer!!.schedule(object : TimerTask() {
             override fun run() {
-                updateInfo()
+                // java.util.Timer permanently dies on an uncaught exception in
+                // a task — the HUD would silently freeze. Never let one tick
+                // kill all future updates.
+                try {
+                    updateInfo()
+                } catch (ex: Exception) {
+                }
             }
-        }, 0, 1500)
+        }, 0, interval)
     }
 
     fun hidePopupWindow() {
         stopTimer()
+        unregisterScreenReceiver()
 
         Thread { CpuCyclesUtils.stopStream() }.start()
         if (show && mView != null) {
@@ -404,6 +474,14 @@ class FloatMonitor(private val mContext: Context) {
                 (mView as LinearLayout).orientation =
                     if (showOtherInfo) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
                 showOtherInfo = !showOtherInfo
+                if (!showOtherInfo) {
+                    // Collapsed back to compact: the simpleperf stream is only
+                    // needed for the per-core view — without this it kept
+                    // running at 2 Hz until the overlay was fully hidden.
+                    Thread { CpuCyclesUtils.stopStream() }.start()
+                }
+                // Re-arm the timer so the interval matches the new mode.
+                startTimer()
             } catch (ex: Exception) {
             }
         }

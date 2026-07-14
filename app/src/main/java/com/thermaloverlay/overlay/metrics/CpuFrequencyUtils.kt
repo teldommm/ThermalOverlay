@@ -51,7 +51,12 @@ class CpuFrequencyUtils {
         for (cluster in clusters) {
             result.add(cluster.split(Regex("[ ]+")).toTypedArray())
         }
-        cpuClusterInfo = result
+        // Don't cache an empty result: on first launch the su prompt may not
+        // be granted yet, so related_cpus reads come back blank. Caching that
+        // would hide cluster info until the process is restarted.
+        if (result.isNotEmpty()) {
+            cpuClusterInfo = result
+        }
         return result
     }
 
