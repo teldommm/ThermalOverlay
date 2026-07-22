@@ -13,10 +13,18 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.thermaloverlay.overlay.metrics.CpuCyclesUtils
+import com.thermaloverlay.overlay.ui.FloatFpsWatch
 import com.thermaloverlay.overlay.ui.FloatMonitor
+import com.thermaloverlay.overlay.ui.FloatMonitorMini
+import com.thermaloverlay.overlay.ui.FloatMonitorThreads
+import com.thermaloverlay.overlay.ui.FloatTaskManager
 
 class OverlayService : Service() {
     private var floatMonitor: FloatMonitor? = null
+    private var floatMonitorMini: FloatMonitorMini? = null
+    private var floatTaskManager: FloatTaskManager? = null
+    private var floatMonitorThreads: FloatMonitorThreads? = null
+    private var floatFpsWatch: FloatFpsWatch? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -30,12 +38,76 @@ class OverlayService : Service() {
             floatMonitor = FloatMonitor(this)
             floatMonitor?.showPopupWindow()
         }
+        if (OverlayPrefs.isMiniMonitorEnabled(this) && !FloatMonitorMini.show) {
+            floatMonitorMini = FloatMonitorMini(this)
+            floatMonitorMini?.showPopupWindow()
+        }
+        if (OverlayPrefs.isProcessMonitorEnabled(this) && !FloatTaskManager.show) {
+            floatTaskManager = FloatTaskManager(this)
+            floatTaskManager?.showPopupWindow()
+        }
+        if (OverlayPrefs.isThreadMonitorEnabled(this) && !FloatMonitorThreads.show) {
+            floatMonitorThreads = FloatMonitorThreads(this)
+            floatMonitorThreads?.showPopupWindow()
+        }
+        if (OverlayPrefs.isFpsRecorderEnabled(this) && !FloatFpsWatch.show) {
+            floatFpsWatch = FloatFpsWatch(this)
+            floatFpsWatch?.showPopupWindow()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            // Lets MainActivity flip these switches live, without tearing
+            // down the whole foreground service and the main HUD.
+            ACTION_TOGGLE_MINI -> {
+                if (OverlayPrefs.isMiniMonitorEnabled(this)) {
+                    if (!FloatMonitorMini.show) {
+                        floatMonitorMini = FloatMonitorMini(this)
+                        floatMonitorMini?.showPopupWindow()
+                    }
+                } else {
+                    floatMonitorMini?.hidePopupWindow()
+                    floatMonitorMini = null
+                }
+            }
+            ACTION_TOGGLE_PROCESS -> {
+                if (OverlayPrefs.isProcessMonitorEnabled(this)) {
+                    if (!FloatTaskManager.show) {
+                        floatTaskManager = FloatTaskManager(this)
+                        floatTaskManager?.showPopupWindow()
+                    }
+                } else {
+                    floatTaskManager?.hidePopupWindow()
+                    floatTaskManager = null
+                }
+            }
+            ACTION_TOGGLE_THREAD -> {
+                if (OverlayPrefs.isThreadMonitorEnabled(this)) {
+                    if (!FloatMonitorThreads.show) {
+                        floatMonitorThreads = FloatMonitorThreads(this)
+                        floatMonitorThreads?.showPopupWindow()
+                    }
+                } else {
+                    floatMonitorThreads?.hidePopupWindow()
+                    floatMonitorThreads = null
+                }
+            }
+            ACTION_TOGGLE_FPS -> {
+                if (OverlayPrefs.isFpsRecorderEnabled(this)) {
+                    if (!FloatFpsWatch.show) {
+                        floatFpsWatch = FloatFpsWatch(this)
+                        floatFpsWatch?.showPopupWindow()
+                    }
+                } else {
+                    floatFpsWatch?.hidePopupWindow()
+                    floatFpsWatch = null
+                }
+            }
         }
         return START_STICKY
     }
@@ -43,6 +115,14 @@ class OverlayService : Service() {
     override fun onDestroy() {
         floatMonitor?.hidePopupWindow()
         floatMonitor = null
+        floatMonitorMini?.hidePopupWindow()
+        floatMonitorMini = null
+        floatTaskManager?.hidePopupWindow()
+        floatTaskManager = null
+        floatMonitorThreads?.hidePopupWindow()
+        floatMonitorThreads = null
+        floatFpsWatch?.hidePopupWindow()
+        floatFpsWatch = null
         OverlayPrefs.setEnabled(this, false)
         super.onDestroy()
     }
@@ -72,5 +152,9 @@ class OverlayService : Service() {
         private const val CHANNEL_ID = "perf_overlay_service"
         private const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "com.thermaloverlay.overlay.action.STOP"
+        const val ACTION_TOGGLE_MINI = "com.thermaloverlay.overlay.action.TOGGLE_MINI"
+        const val ACTION_TOGGLE_PROCESS = "com.thermaloverlay.overlay.action.TOGGLE_PROCESS"
+        const val ACTION_TOGGLE_THREAD = "com.thermaloverlay.overlay.action.TOGGLE_THREAD"
+        const val ACTION_TOGGLE_FPS = "com.thermaloverlay.overlay.action.TOGGLE_FPS"
     }
 }

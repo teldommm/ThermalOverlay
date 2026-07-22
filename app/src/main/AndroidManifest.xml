@@ -27,6 +27,11 @@
             android:exported="false"
             android:label="@string/freq_control_title" />
 
+        <activity
+            android:name=".activities.ActivityFpsChart"
+            android:exported="false"
+            android:label="@string/fps_chart_title" />
+
         <service
             android:name=".OverlayService"
             android:exported="false"
@@ -46,6 +51,19 @@
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
+        </service>
+
+        <service
+            android:name=".ForegroundAppService"
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
         </service>
 
     </application>

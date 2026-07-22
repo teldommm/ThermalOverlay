@@ -17,6 +17,41 @@
     <string name="dual_battery_label">Двойная батарея</string>
     <string name="dual_battery_desc">Удваивает показатель #PWR для устройств с двумя аккумуляторными ячейками</string>
 
+    <string name="mini_monitor_label">Мини-монитор</string>
+    <string name="mini_monitor_desc">Компактная строка CPU/GPU/FPS/батарея, фиксированная позиция, не перетаскивается</string>
+
+    <string name="process_monitor_label">Монитор процессов</string>
+    <string name="process_monitor_desc">Перетаскиваемый список процессов с фильтром Apps/All и завершением по тапу</string>
+    <string name="process_monitor_title">Диспетчер процессов</string>
+
+    <string name="accessibility_note">Монитору потоков и рекордеру FPS нужна специальная возможность, чтобы знать, какое приложение сейчас на переднем плане</string>
+    <string name="accessibility_status_enabled">Специальные возможности: включены</string>
+    <string name="accessibility_status_disabled">Специальные возможности: нажмите, чтобы включить</string>
+    <string name="accessibility_required_toast">Сначала включите специальные возможности</string>
+    <string name="accessibility_service_label">Отслеживание переднего плана ThermalOverlay</string>
+    <string name="accessibility_service_desc">Позволяет монитору потоков и рекордеру FPS узнавать, какое приложение сейчас на переднем плане. Читает только имя пакета активного окна — без содержимого экрана.</string>
+
+    <string name="thread_monitor_label">Монитор потоков</string>
+    <string name="thread_monitor_desc">Топ-15 потоков по CPU для текущего приложения на переднем плане</string>
+    <string name="thread_monitor_no_foreground_app">Не удалось определить процесс текущего приложения. Проверьте, включена ли специальная возможность.</string>
+
+    <string name="fps_recorder_label">Рекордер кадровой частоты</string>
+    <string name="fps_recorder_desc">Индикатор FPS с кнопкой записи; логирует FPS/CPU/GPU/батарею за сессию</string>
+
+    <string name="fps_history_button">История кадровой частоты</string>
+    <string name="fps_chart_title">История кадровой частоты</string>
+    <string name="fps_chart_subtitle">Записанные сессии — FPS, температура, батарея и нагрузка CPU/GPU во времени</string>
+    <string name="fps_chart_start_recording">Начать запись</string>
+    <string name="fps_chart_stop_recording">Остановить запись</string>
+    <string name="fps_chart_no_sessions">Записей кадровой частоты пока нет</string>
+    <string name="fps_chart_hint">Откройте приложение, которое нужно записать, затем нажмите на плашку в правом верхнем углу, чтобы начать/остановить</string>
+    <string name="fps_chart_dimension_temperature">Температура</string>
+    <string name="fps_chart_dimension_battery">Батарея</string>
+    <string name="fps_chart_dimension_load">Нагрузка CPU/GPU</string>
+    <string name="fps_chart_smooth_label">Плавность</string>
+    <string name="fps_chart_fever_label">Температура</string>
+    <string name="fps_chart_temp_label">Температура</string>
+
     <string name="notification_channel_name">ThermalOverlay HUD</string>
     <string name="notification_title">Оверлей производительности активен</string>
     <string name="tile_label">Оверлей</string>
