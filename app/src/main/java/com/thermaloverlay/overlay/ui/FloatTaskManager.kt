@@ -32,7 +32,7 @@ import java.util.Timer
 import java.util.TimerTask
 
 class FloatTaskManager(private val context: Context) {
-    private val processUtils = ProcessUtilsSimple()
+    private val processUtils = ProcessUtilsSimple(context)
 
     val supported: Boolean
         get() = processUtils.supported()
@@ -156,8 +156,9 @@ class FloatTaskManager(private val context: Context) {
         var filterMode = AdapterProcessMini.FILTER_ANDROID
         filterText.setOnClickListener {
             filterMode = if (filterMode == AdapterProcessMini.FILTER_ANDROID) AdapterProcessMini.FILTER_ALL else AdapterProcessMini.FILTER_ANDROID
+            processList.setSelection(0)
             (processList.adapter as AdapterProcessMini).updateFilterMode(filterMode)
-            filterText.text = if (filterMode == AdapterProcessMini.FILTER_ANDROID) "Apps" else "All"
+            filterText.text = if (filterMode == AdapterProcessMini.FILTER_ANDROID) context.getString(R.string.process_filter_apps) else context.getString(R.string.process_filter_all)
         }
 
         // Kill requires a second tap on the same process within 3s — cheap
@@ -169,14 +170,14 @@ class FloatTaskManager(private val context: Context) {
             val adapter = processList.adapter as AdapterProcessMini
             val processInfo = adapter.getItem(position)
             if (processInfo.name == context.packageName) {
-                Toast.makeText(context, "Suicide is not allowed~", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.process_kill_self_blocked), Toast.LENGTH_SHORT).show()
                 return@setOnItemClickListener
             }
             val now = System.currentTimeMillis()
             if (now - lastTapTime > 3000 || processInfo.pid != lastKillCandidatePid) {
                 lastTapTime = now
                 lastKillCandidatePid = processInfo.pid
-                Toast.makeText(context, "To end the process, tap again", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.process_kill_tip), Toast.LENGTH_SHORT).show()
             } else {
                 processUtils.killProcess(processInfo)
                 adapter.removeItem(position)
@@ -187,7 +188,7 @@ class FloatTaskManager(private val context: Context) {
             locked = !locked
             it.alpha = if (locked) 1f else 0.3f
             if (locked) {
-                Toast.makeText(context, "Position locked — long-press this icon to also make the window click-through", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, context.getString(R.string.process_locked), Toast.LENGTH_LONG).show()
             }
         }
 

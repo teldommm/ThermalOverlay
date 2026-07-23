@@ -1,7 +1,13 @@
 /**
- * Reads named thermal zones (CPU/GPU/DDR/Camera) from
+ * Reads named thermal zones (GPU/DDR/Camera) from
  * /sys/class/thermal/thermal_zone*, matching by the zone's `type` file
- * against keyword substrings.
+ * against keyword substrings. CPU is deliberately NOT handled here — it's
+ * read via CpuLoadUtils.getCpuTemperatureText(), which already exists and
+ * is proven (matches "cpu-0" specifically, not a bare "cpu" substring,
+ * and filters out implausible near-zero readings). This class's own
+ * generic "cpu" substring match was tried first and got exactly that
+ * wrong: too loose a keyword, and no floor on what counts as a real
+ * reading, so a matched-but-bogus zone would display as-is.
  *
  * Simplification versus a fuller implementation: the source app resolves
  * these through a bundled root daemon with per-vendor detection scripts
@@ -20,7 +26,6 @@ object TemperatureSensorUtils {
     private data class Sensor(val label: String, val keywords: List<String>)
 
     private val sensorDefs = listOf(
-        Sensor("CPU", listOf("cpu")),
         Sensor("GPU", listOf("gpu")),
         Sensor("DDR", listOf("ddr")),
         Sensor("CAM", listOf("cam"))
@@ -87,6 +92,11 @@ object TemperatureSensorUtils {
 
         for ((label, paths) in zones) {
             val milliDegrees = paths.mapNotNull { tempByPath[it] }.maxOrNull() ?: continue
+            // Same floor CpuLoadUtils.getCpuTemperatureText() uses: a real
+            // device temperature is never at or below 1°C, so anything
+            // this low means the zone returned an error code or a
+            // disabled-sensor placeholder, not an actual reading.
+            if (milliDegrees <= 1000) continue
             result[label] = milliDegrees / 1000.0
         }
         return result

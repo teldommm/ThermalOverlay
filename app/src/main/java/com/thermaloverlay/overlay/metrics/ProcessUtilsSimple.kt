@@ -1,5 +1,10 @@
 /**
  * Lists running processes and kills them, via a root shell `top`/`ps`.
+ * isAndroidProcess() also falls back to a live PackageManager lookup when
+ * the command/name pattern doesn't match, mirroring the real app's own
+ * kill-decision check — otherwise some real apps get misclassified as
+ * plain Linux processes on devices where the shell's command column
+ * doesn't literally contain "app_process".
  *
  * One deliberate simplification versus a fuller implementation: some apps
  * bundle a prebuilt toybox binary as an asset and install it to get
@@ -13,11 +18,11 @@
  */
 package com.thermaloverlay.overlay.metrics
 
+import android.content.Context
 import com.thermaloverlay.overlay.model.ProcessInfo
-import com.thermaloverlay.overlay.model.ThreadInfo
 import com.thermaloverlay.overlay.shell.KeepShellPublic
 
-class ProcessUtilsSimple {
+class ProcessUtilsSimple(private val context: Context) {
     // Resolved once per process: which of the two candidate commands this
     // device actually understands. Empty string means neither worked.
     private var resolvedCommand: String? = null
@@ -82,8 +87,29 @@ class ProcessUtilsSimple {
         }
 
     private val androidProcessRegex = Regex(".*\\..*")
+
+    // Matches the real app's kill-decision check: command+name pattern
+    // first (cheap, no I/O), and if that doesn't match, fall back to
+    // asking PackageManager whether the (colon-stripped) name resolves to
+    // an installed package. That fallback matters on devices/processes
+    // where the shell's command column doesn't literally contain
+    // "app_process" — without it, some real Android apps get misclassified
+    // as plain Linux processes (wrong icon, killed via bare `kill -9`
+    // instead of `am force-stop`).
     private fun isAndroidProcess(processInfo: ProcessInfo): Boolean {
-        return processInfo.command.contains("app_process") && processInfo.name.matches(androidProcessRegex)
+        if (processInfo.command.contains("app_process") && processInfo.name.matches(androidProcessRegex)) {
+            return true
+        }
+        return try {
+            val packageName = if (processInfo.name.contains(":")) {
+                processInfo.name.substring(0, processInfo.name.indexOf(":"))
+            } else {
+                processInfo.name
+            }
+            context.packageManager.getPackageInfo(packageName, 0) != null
+        } catch (ex: Exception) {
+            false
+        }
     }
 
     fun killProcess(processInfo: ProcessInfo) {
@@ -97,36 +123,5 @@ class ProcessUtilsSimple {
         } else {
             KeepShellPublic.doCmdSync("kill -9 ${processInfo.pid}")
         }
-    }
-
-    // Resolves an app's main process PID from its package name, for the
-    // thread monitor to attach to.
-    fun getAppMainProcess(packageName: String?): Int {
-        if (packageName.isNullOrEmpty()) return -1
-        val pid = KeepShellPublic.doCmdSync(
-            "ps -ef -o PID,NAME | grep -e ${packageName}\$ | egrep -o '[0-9]{1,}' | head -n 1"
-        ).trim()
-        return pid.toIntOrNull() ?: -1
-    }
-
-    // Top 15 threads of a process by CPU load, for the thread monitor.
-    fun getThreadLoads(pid: Int): List<ThreadInfo> {
-        val output = KeepShellPublic.doCmdSync("top -H -b -q -n 1 -p $pid -o TID,%CPU,CMD")
-        val threads = ArrayList<ThreadInfo>()
-        for (rawRow in output.split("\n".toRegex())) {
-            val row = rawRow.trim()
-            val cols = row.split(" +".toRegex())
-            if (cols.size <= 2) continue
-            try {
-                val info = ThreadInfo()
-                info.tid = cols[0].toInt()
-                info.cpuLoad = cols[1].toDouble()
-                info.name = row.substring(row.indexOf(cols[1]) + cols[1].length).trim()
-                threads.add(info)
-            } catch (ex: Exception) {
-            }
-        }
-        threads.sortByDescending { it.cpuLoad }
-        return threads.subList(0, threads.size.coerceAtMost(15))
     }
 }

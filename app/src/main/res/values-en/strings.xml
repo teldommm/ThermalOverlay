@@ -30,17 +30,18 @@
     <string name="process_monitor_label">Process monitor</string>
     <string name="process_monitor_desc">Draggable process list with Apps/All filter and tap-to-kill</string>
     <string name="process_monitor_title">Process manager</string>
+    <string name="process_filter_apps">Apps</string>
+    <string name="process_filter_all">All</string>
+    <string name="process_kill_self_blocked">Can\'t kill ThermalOverlay from here</string>
+    <string name="process_kill_tip">To kill the process, tap it again</string>
+    <string name="process_locked">Position locked. Long-press this icon to also make the window click-through</string>
 
-    <string name="accessibility_note">Thread monitor and framerate recorder need the accessibility service to know which app is in the foreground</string>
+    <string name="accessibility_note">Framerate recorder needs the accessibility service to know which app is in the foreground</string>
     <string name="accessibility_status_enabled">Accessibility service: enabled</string>
     <string name="accessibility_status_disabled">Accessibility service: tap to enable</string>
     <string name="accessibility_required_toast">Enable the accessibility service first</string>
     <string name="accessibility_service_label">ThermalOverlay foreground-app tracking</string>
-    <string name="accessibility_service_desc">Lets the thread monitor and framerate recorder know which app is currently in the foreground. Reads only the package name of the active window — no screen content.</string>
-
-    <string name="thread_monitor_label">Thread monitor</string>
-    <string name="thread_monitor_desc">Top 15 threads by CPU for the current foreground app</string>
-    <string name="thread_monitor_no_foreground_app">Unable to get current app process. Check that the accessibility service is enabled.</string>
+    <string name="accessibility_service_desc">Lets the framerate recorder know which app is currently in the foreground. Reads only the package name of the active window — no screen content.</string>
 
     <string name="fps_recorder_label">Framerate recorder</string>
     <string name="fps_recorder_desc">Live FPS pill with a record button; logs FPS/CPU/GPU/battery per session</string>

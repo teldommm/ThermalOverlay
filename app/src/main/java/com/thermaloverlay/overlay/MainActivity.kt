@@ -1,10 +1,11 @@
 /**
  * Main screen: every overlay (load monitor, mini monitor, process monitor,
- * thread monitor, framerate recorder) is its own switch — there's no single
- * master Start/Stop anymore. OverlayService starts itself the moment any one
- * switch turns on and stops itself once the last one turns off. Also
- * requests the draw-over-other-apps permission, checks root access, toggles
- * dual-battery mode, and opens the frequency control / FPS history screens.
+ * framerate recorder, temperature monitor) is its own switch — there's no
+ * single master Start/Stop anymore. OverlayService starts itself the
+ * moment any one switch turns on and stops itself once the last one turns
+ * off. Also requests the draw-over-other-apps permission, checks root
+ * access, toggles dual-battery mode, and opens the frequency control /
+ * FPS history screens.
  */
 package com.thermaloverlay.overlay
 
@@ -35,7 +36,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var miniMonitorRamSwitch: Switch
     private lateinit var miniMonitorSwitch: Switch
     private lateinit var processMonitorSwitch: Switch
-    private lateinit var threadMonitorSwitch: Switch
     private lateinit var fpsRecorderSwitch: Switch
     private lateinit var temperatureMonitorSwitch: Switch
     private lateinit var rootWarning: LinearLayout
@@ -68,7 +68,6 @@ class MainActivity : AppCompatActivity() {
         miniMonitorRamSwitch = findViewById(R.id.mini_monitor_ram_switch)
         miniMonitorSwitch = findViewById(R.id.mini_monitor_switch)
         processMonitorSwitch = findViewById(R.id.process_monitor_switch)
-        threadMonitorSwitch = findViewById(R.id.thread_monitor_switch)
         fpsRecorderSwitch = findViewById(R.id.fps_recorder_switch)
         temperatureMonitorSwitch = findViewById(R.id.temperature_monitor_switch)
         rootWarning = findViewById(R.id.root_warning)
@@ -115,10 +114,6 @@ class MainActivity : AppCompatActivity() {
             isEnabled = OverlayPrefs::isProcessMonitorEnabled, setEnabled = OverlayPrefs::setProcessMonitorEnabled
         )
         bindMonitorSwitch(
-            threadMonitorSwitch, OverlayService.ACTION_TOGGLE_THREAD, requireAccessibility = true,
-            isEnabled = OverlayPrefs::isThreadMonitorEnabled, setEnabled = OverlayPrefs::setThreadMonitorEnabled
-        )
-        bindMonitorSwitch(
             fpsRecorderSwitch, OverlayService.ACTION_TOGGLE_FPS, requireAccessibility = true,
             isEnabled = OverlayPrefs::isFpsRecorderEnabled, setEnabled = OverlayPrefs::setFpsRecorderEnabled
         )
@@ -152,7 +147,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Shared by every monitor switch (load/mini/process/thread/fps) so the
+    // Shared by every monitor switch (load/mini/process/fps/temperature) so the
     // permission-check → persist → live-toggle sequence lives in one place
     // instead of five near-identical copies — the process monitor and the
     // FPS history screen both drifted from this exact sequence before by
@@ -244,7 +239,6 @@ class MainActivity : AppCompatActivity() {
         miniMonitorRamSwitch.isChecked = OverlayPrefs.isMiniMonitorRamMode(this)
         miniMonitorSwitch.isChecked = OverlayPrefs.isMiniMonitorEnabled(this)
         processMonitorSwitch.isChecked = OverlayPrefs.isProcessMonitorEnabled(this)
-        threadMonitorSwitch.isChecked = OverlayPrefs.isThreadMonitorEnabled(this)
         fpsRecorderSwitch.isChecked = OverlayPrefs.isFpsRecorderEnabled(this)
         temperatureMonitorSwitch.isChecked = OverlayPrefs.isTemperatureMonitorEnabled(this)
         suppressSwitchEvents = false

@@ -30,8 +30,8 @@ class CpuChartBarView @JvmOverloads constructor(
     private var minAlpha = 35
     private var maxAlpha = 255
     private var accentColor = Color.parseColor("#4CAF50")
-    private val veryHighColor = Color.parseColor("#F44336")
-    private val highColor = Color.parseColor("#FFA000")
+    private val veryHighColor = Color.parseColor("#f9592f")
+    private val highColor = Color.parseColor("#fc8a1b")
 
     private var barWidth = 0f
     private var paint: Paint? = null

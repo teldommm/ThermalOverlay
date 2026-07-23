@@ -16,7 +16,6 @@ import com.thermaloverlay.overlay.metrics.CpuCyclesUtils
 import com.thermaloverlay.overlay.ui.FloatFpsWatch
 import com.thermaloverlay.overlay.ui.FloatMonitor
 import com.thermaloverlay.overlay.ui.FloatMonitorMini
-import com.thermaloverlay.overlay.ui.FloatMonitorThreads
 import com.thermaloverlay.overlay.ui.FloatTaskManager
 import com.thermaloverlay.overlay.ui.FloatTemperature
 
@@ -24,7 +23,6 @@ class OverlayService : Service() {
     private var floatMonitor: FloatMonitor? = null
     private var floatMonitorMini: FloatMonitorMini? = null
     private var floatTaskManager: FloatTaskManager? = null
-    private var floatMonitorThreads: FloatMonitorThreads? = null
     private var floatFpsWatch: FloatFpsWatch? = null
     private var floatTemperature: FloatTemperature? = null
 
@@ -48,10 +46,6 @@ class OverlayService : Service() {
         if (OverlayPrefs.isProcessMonitorEnabled(this) && !FloatTaskManager.show) {
             floatTaskManager = FloatTaskManager(this)
             floatTaskManager?.showPopupWindow()
-        }
-        if (OverlayPrefs.isThreadMonitorEnabled(this) && !FloatMonitorThreads.show) {
-            floatMonitorThreads = FloatMonitorThreads(this)
-            floatMonitorThreads?.showPopupWindow()
         }
         if (OverlayPrefs.isFpsRecorderEnabled(this) && !FloatFpsWatch.show) {
             floatFpsWatch = FloatFpsWatch(this)
@@ -113,17 +107,6 @@ class OverlayService : Service() {
                     floatTaskManager = null
                 }
             }
-            ACTION_TOGGLE_THREAD -> {
-                if (OverlayPrefs.isThreadMonitorEnabled(this)) {
-                    if (!FloatMonitorThreads.show) {
-                        floatMonitorThreads = FloatMonitorThreads(this)
-                        floatMonitorThreads?.showPopupWindow()
-                    }
-                } else {
-                    floatMonitorThreads?.hidePopupWindow()
-                    floatMonitorThreads = null
-                }
-            }
             ACTION_TOGGLE_FPS -> {
                 if (OverlayPrefs.isFpsRecorderEnabled(this)) {
                     if (!FloatFpsWatch.show) {
@@ -164,8 +147,6 @@ class OverlayService : Service() {
         floatMonitorMini = null
         floatTaskManager?.hidePopupWindow()
         floatTaskManager = null
-        floatMonitorThreads?.hidePopupWindow()
-        floatMonitorThreads = null
         floatFpsWatch?.hidePopupWindow()
         floatFpsWatch = null
         floatTemperature?.hidePopupWindow()
@@ -202,7 +183,6 @@ class OverlayService : Service() {
         const val ACTION_TOGGLE_LOAD = "com.thermaloverlay.overlay.action.TOGGLE_LOAD"
         const val ACTION_TOGGLE_MINI = "com.thermaloverlay.overlay.action.TOGGLE_MINI"
         const val ACTION_TOGGLE_PROCESS = "com.thermaloverlay.overlay.action.TOGGLE_PROCESS"
-        const val ACTION_TOGGLE_THREAD = "com.thermaloverlay.overlay.action.TOGGLE_THREAD"
         const val ACTION_TOGGLE_FPS = "com.thermaloverlay.overlay.action.TOGGLE_FPS"
         const val ACTION_TOGGLE_TEMPERATURE = "com.thermaloverlay.overlay.action.TOGGLE_TEMPERATURE"
     }

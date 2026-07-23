@@ -30,17 +30,18 @@
     <string name="process_monitor_label">Монитор процессов</string>
     <string name="process_monitor_desc">Перетаскиваемый список процессов с фильтром Apps/All и завершением по тапу</string>
     <string name="process_monitor_title">Диспетчер процессов</string>
+    <string name="process_filter_apps">Приложения</string>
+    <string name="process_filter_all">Все</string>
+    <string name="process_kill_self_blocked">Нельзя завершить ThermalOverlay отсюда</string>
+    <string name="process_kill_tip">Чтобы завершить процесс, нажмите ещё раз</string>
+    <string name="process_locked">Позиция закреплена. Долгое нажатие на эту иконку также сделает окно прозрачным для касаний</string>
 
-    <string name="accessibility_note">Монитору потоков и рекордеру FPS нужна специальная возможность, чтобы знать, какое приложение сейчас на переднем плане</string>
+    <string name="accessibility_note">Рекордеру FPS нужна специальная возможность, чтобы знать, какое приложение сейчас на переднем плане</string>
     <string name="accessibility_status_enabled">Специальные возможности: включены</string>
     <string name="accessibility_status_disabled">Специальные возможности: нажмите, чтобы включить</string>
     <string name="accessibility_required_toast">Сначала включите специальные возможности</string>
     <string name="accessibility_service_label">Отслеживание переднего плана ThermalOverlay</string>
-    <string name="accessibility_service_desc">Позволяет монитору потоков и рекордеру FPS узнавать, какое приложение сейчас на переднем плане. Читает только имя пакета активного окна — без содержимого экрана.</string>
-
-    <string name="thread_monitor_label">Монитор потоков</string>
-    <string name="thread_monitor_desc">Топ-15 потоков по CPU для текущего приложения на переднем плане</string>
-    <string name="thread_monitor_no_foreground_app">Не удалось определить процесс текущего приложения. Проверьте, включена ли специальная возможность.</string>
+    <string name="accessibility_service_desc">Позволяет рекордеру FPS узнавать, какое приложение сейчас на переднем плане. Читает только имя пакета активного окна — без содержимого экрана.</string>
 
     <string name="fps_recorder_label">Рекордер кадровой частоты</string>
     <string name="fps_recorder_desc">Индикатор FPS с кнопкой записи; логирует FPS/CPU/GPU/батарею за сессию</string>

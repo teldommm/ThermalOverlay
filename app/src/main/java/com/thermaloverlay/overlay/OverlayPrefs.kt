@@ -14,7 +14,6 @@ object OverlayPrefs {
     private const val KEY_MINI_ENABLED = "mini_monitor_enabled"
     private const val KEY_MINI_RAM_MODE = "mini_monitor_ram_mode"
     private const val KEY_PROCESS_ENABLED = "process_monitor_enabled"
-    private const val KEY_THREAD_ENABLED = "thread_monitor_enabled"
     private const val KEY_FPS_RECORDER_ENABLED = "fps_recorder_enabled"
     private const val KEY_TEMPERATURE_ENABLED = "temperature_monitor_enabled"
 
@@ -40,7 +39,7 @@ object OverlayPrefs {
     // when this is true, and no reason to when it's false.
     fun anyMonitorEnabled(context: Context): Boolean {
         return isLoadMonitorEnabled(context) || isMiniMonitorEnabled(context) ||
-            isProcessMonitorEnabled(context) || isThreadMonitorEnabled(context) ||
+            isProcessMonitorEnabled(context) ||
             isFpsRecorderEnabled(context) || isTemperatureMonitorEnabled(context)
     }
 
@@ -68,14 +67,6 @@ object OverlayPrefs {
 
     fun setProcessMonitorEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_PROCESS_ENABLED, enabled).apply()
-    }
-
-    fun isThreadMonitorEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_THREAD_ENABLED, false)
-    }
-
-    fun setThreadMonitorEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_THREAD_ENABLED, enabled).apply()
     }
 
     fun isFpsRecorderEnabled(context: Context): Boolean {

@@ -4,6 +4,14 @@
  * Draggable with double-tap-to-hide, same touch handling as FloatMonitor/
  * FloatTaskManager. Ported from vtools' FloatTemperature.
  *
+ * CPU temperature is read via CpuLoadUtils.getCpuTemperatureText() — the
+ * same method FloatMonitor's own #CPU line already uses — rather than
+ * TemperatureSensorUtils' generic zone-type keyword match. That generic
+ * match is what this class used at first, and it was wrong in exactly the
+ * way you'd expect from a bare "cpu" substring search with no sanity
+ * check on the result: too loose a keyword, and no floor on what counts
+ * as a real reading.
+ *
  * The source app's tap-to-expand click handler references a view id
  * (fw_chart_list) that its own fw_temperature.xml layout doesn't contain —
  * confirmed against the shipped APK's resources, so that path always
@@ -32,12 +40,14 @@ import android.widget.TextView
 import android.widget.Toast
 import com.thermaloverlay.overlay.R
 import com.thermaloverlay.overlay.metrics.BatteryStatusReader
+import com.thermaloverlay.overlay.metrics.CpuLoadUtils
 import com.thermaloverlay.overlay.metrics.TemperatureSensorUtils
 import com.thermaloverlay.overlay.utils.WindowCompatHelper
 import java.util.Timer
 import java.util.TimerTask
 
 class FloatTemperature(private val mContext: Context) {
+    private val cpuLoadUtils = CpuLoadUtils()
 
     fun showPopupWindow(): Boolean {
         if (show) return true
@@ -186,6 +196,15 @@ class FloatTemperature(private val mContext: Context) {
         val batteryTemp = BatteryStatusReader.temperatureCurrent
         if (batteryTemp > -1) {
             sb.append("# BAT ").append(batteryTemp).append("\u2103\n")
+        }
+
+        // Reuses the same method FloatMonitor's own #CPU line already
+        // relies on — matches "cpu-0" specifically (not a bare "cpu"
+        // substring) and filters out implausible near-zero readings.
+        // Already includes its own "°C" suffix.
+        val cpuTemp = cpuLoadUtils.getCpuTemperatureText()
+        if (cpuTemp != "--") {
+            sb.append("# CPU ").append(cpuTemp).append('\n')
         }
 
         for ((label, value) in TemperatureSensorUtils.readAvailable()) {
