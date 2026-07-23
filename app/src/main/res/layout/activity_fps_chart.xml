@@ -207,6 +207,149 @@
                 android:id="@+id/chart_session_view"
                 android:layout_width="match_parent"
                 android:layout_height="220dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_cpu_temp"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionLineChartView
+                android:id="@+id/chart_cpu_temp_view"
+                android:layout_width="match_parent"
+                android:layout_height="140dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_ddr"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionLineChartView
+                android:id="@+id/chart_ddr_view"
+                android:layout_width="match_parent"
+                android:layout_height="140dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_current"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionLineChartView
+                android:id="@+id/chart_current_view"
+                android:layout_width="match_parent"
+                android:layout_height="140dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_power"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionLineChartView
+                android:id="@+id/chart_power_view"
+                android:layout_width="match_parent"
+                android:layout_height="140dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_gpu_load"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionLineChartView
+                android:id="@+id/chart_gpu_load_view"
+                android:layout_width="match_parent"
+                android:layout_height="140dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_core_loads"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionMultiLineChartView
+                android:id="@+id/chart_core_loads_view"
+                android:layout_width="match_parent"
+                android:layout_height="160dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_cluster_freq"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionMultiLineChartView
+                android:id="@+id/chart_cluster_freq_view"
+                android:layout_width="match_parent"
+                android:layout_height="160dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_core_cycles"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionMultiLineChartView
+                android:id="@+id/chart_core_cycles_view"
+                android:layout_width="match_parent"
+                android:layout_height="160dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_freq_stat"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.CpuFrequencyStatView
+                android:id="@+id/chart_freq_stat_view"
+                android:layout_width="match_parent"
+                android:layout_height="140dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_frame_time"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionJankChartView
+                android:id="@+id/chart_frame_time_view"
+                android:layout_width="match_parent"
+                android:layout_height="140dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/fps_chart_section_jank"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+            <com.thermaloverlay.overlay.ui.SessionJankChartView
+                android:id="@+id/chart_jank_view"
+                android:layout_width="match_parent"
+                android:layout_height="140dp" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

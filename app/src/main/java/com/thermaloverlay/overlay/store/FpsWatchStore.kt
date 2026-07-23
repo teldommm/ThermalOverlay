@@ -13,7 +13,28 @@ import com.thermaloverlay.overlay.model.FpsWatchSession
 
 class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log", null, DB_VERSION) {
     companion object {
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 3
+
+        // Columns added in v2, applied both to fresh installs (onCreate)
+        // and existing DBs (onUpgrade) from the same list, so the two paths
+        // can never drift apart.
+        private val V2_COLUMNS = listOf(
+            "cpu_temp REAL",
+            "ddr_freq INTEGER",
+            "current_ma REAL",
+            "voltage REAL",
+            "core_loads TEXT",
+            "cluster_freqs TEXT",
+            "core_cycles TEXT"
+        )
+
+        // v3: jank/big-jank counts and worst frame time for the tick, from
+        // FrameStatsUtils (dumpsys gfxinfo framestats).
+        private val V3_COLUMNS = listOf(
+            "jank_count INTEGER",
+            "big_jank_count INTEGER",
+            "frame_time REAL"
+        )
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -38,11 +59,32 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
                     "temperature REAL" +
                     ")"
             )
+            V2_COLUMNS.forEach { db.execSQL("alter table fps_history add column $it") }
+            V3_COLUMNS.forEach { db.execSQL("alter table fps_history add column $it") }
         } catch (ex: Exception) {
         }
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            V2_COLUMNS.forEach {
+                try {
+                    db.execSQL("alter table fps_history add column $it")
+                } catch (ex: Exception) {
+                    // Column already present (e.g. a partially-applied
+                    // earlier upgrade) — ignore and keep going.
+                }
+            }
+        }
+        if (oldVersion < 3) {
+            V3_COLUMNS.forEach {
+                try {
+                    db.execSQL("alter table fps_history add column $it")
+                } catch (ex: Exception) {
+                }
+            }
+        }
+    }
 
     fun createSession(packageName: String): Long {
         val time = System.currentTimeMillis()
@@ -59,7 +101,24 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
         }
     }
 
-    fun addHistory(session: Long, fps: Float, cpuLoad: Double, gpuLoad: Double, capacity: Int, temperature: Double): Boolean {
+    fun addHistory(
+        session: Long,
+        fps: Float,
+        cpuLoad: Double,
+        gpuLoad: Double,
+        capacity: Int,
+        temperature: Double,
+        cpuTemp: Double? = null,
+        ddrFreq: Int? = null,
+        currentMa: Double? = null,
+        voltage: Double? = null,
+        coreLoads: List<Int>? = null,
+        clusterFreqs: List<Int>? = null,
+        coreCycles: List<Int>? = null,
+        jankCount: Int? = null,
+        bigJankCount: Int? = null,
+        frameTimeMs: Double? = null
+    ): Boolean {
         return try {
             val values = ContentValues().apply {
                 put("time", System.currentTimeMillis())
@@ -69,6 +128,16 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
                 put("gpu_load", gpuLoad)
                 put("capacity", capacity)
                 put("temperature", temperature)
+                cpuTemp?.let { put("cpu_temp", it) }
+                ddrFreq?.let { put("ddr_freq", it) }
+                currentMa?.let { put("current_ma", it) }
+                voltage?.let { put("voltage", it) }
+                coreLoads?.let { put("core_loads", it.joinToString(",")) }
+                clusterFreqs?.let { put("cluster_freqs", it.joinToString(",")) }
+                coreCycles?.let { put("core_cycles", it.joinToString(",")) }
+                jankCount?.let { put("jank_count", it) }
+                bigJankCount?.let { put("big_jank_count", it) }
+                frameTimeMs?.let { put("frame_time", it) }
             }
             writableDatabase.insert("fps_history", null, values) >= 0
         } catch (ex: Exception) {
@@ -116,6 +185,56 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
     fun sessionCpuLoadData(sessionId: Long) = floatColumn("cpu_load", sessionId)
     fun sessionGpuLoadData(sessionId: Long) = floatColumn("gpu_load", sessionId)
     fun sessionCapacityData(sessionId: Long) = floatColumn("capacity", sessionId)
+    fun sessionCpuTempData(sessionId: Long) = floatColumn("cpu_temp", sessionId)
+    fun sessionDdrFreqData(sessionId: Long) = floatColumn("ddr_freq", sessionId)
+    fun sessionCurrentData(sessionId: Long) = floatColumn("current_ma", sessionId)
+    fun sessionVoltageData(sessionId: Long) = floatColumn("voltage", sessionId)
+    fun sessionJankData(sessionId: Long) = floatColumn("jank_count", sessionId)
+    fun sessionBigJankData(sessionId: Long) = floatColumn("big_jank_count", sessionId)
+    fun sessionFrameTimeData(sessionId: Long) = floatColumn("frame_time", sessionId)
+
+    // Raw rows for a CSV-per-tick column: one entry per tick, each the
+    // comma-split values for that tick (core loads, cluster freqs, ...).
+    // Ticks where the column is null/empty come back as an empty list
+    // rather than being skipped, so tick alignment with the other columns
+    // (e.g. for a shared time axis) is preserved.
+    private fun csvColumn(column: String, sessionId: Long): List<List<Float>> {
+        val result = ArrayList<List<Float>>()
+        try {
+            readableDatabase.rawQuery(
+                "select $column from fps_history where session = ? order by id",
+                arrayOf(sessionId.toString())
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val raw = cursor.getString(0)
+                    result.add(
+                        if (raw.isNullOrEmpty()) emptyList()
+                        else raw.split(",").mapNotNull { it.toFloatOrNull() }
+                    )
+                }
+            }
+        } catch (ex: Exception) {
+        }
+        return result
+    }
+
+    // Transposes a CSV-per-tick column into one series per index (core,
+    // cluster, ...) — series[i] is the value at index i across every tick.
+    // Ticks missing that index (core count changed mid-session, hotplug,
+    // etc.) contribute nothing to that series rather than a fabricated 0,
+    // so a chart drawing series[i] just sees fewer points for that index.
+    private fun transposeSeries(rows: List<List<Float>>): List<List<Float>> {
+        val seriesCount = rows.maxOfOrNull { it.size } ?: return emptyList()
+        val series = List(seriesCount) { ArrayList<Float>() }
+        for (row in rows) {
+            for (i in row.indices) series[i].add(row[i])
+        }
+        return series
+    }
+
+    fun sessionCoreLoadSeries(sessionId: Long) = transposeSeries(csvColumn("core_loads", sessionId))
+    fun sessionClusterFreqSeries(sessionId: Long) = transposeSeries(csvColumn("cluster_freqs", sessionId))
+    fun sessionCoreCyclesSeries(sessionId: Long) = transposeSeries(csvColumn("core_cycles", sessionId))
 
     private fun aggregate(fn: String, sessionId: Long): Float {
         return try {
