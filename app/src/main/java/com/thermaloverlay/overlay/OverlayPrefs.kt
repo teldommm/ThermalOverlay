@@ -12,9 +12,11 @@ object OverlayPrefs {
     private const val KEY_DUAL_BATTERY = "dual_battery"
     private const val KEY_LOAD_ENABLED = "load_monitor_enabled"
     private const val KEY_MINI_ENABLED = "mini_monitor_enabled"
+    private const val KEY_MINI_RAM_MODE = "mini_monitor_ram_mode"
     private const val KEY_PROCESS_ENABLED = "process_monitor_enabled"
     private const val KEY_THREAD_ENABLED = "thread_monitor_enabled"
     private const val KEY_FPS_RECORDER_ENABLED = "fps_recorder_enabled"
+    private const val KEY_TEMPERATURE_ENABLED = "temperature_monitor_enabled"
 
     fun isEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
@@ -38,7 +40,8 @@ object OverlayPrefs {
     // when this is true, and no reason to when it's false.
     fun anyMonitorEnabled(context: Context): Boolean {
         return isLoadMonitorEnabled(context) || isMiniMonitorEnabled(context) ||
-            isProcessMonitorEnabled(context) || isThreadMonitorEnabled(context) || isFpsRecorderEnabled(context)
+            isProcessMonitorEnabled(context) || isThreadMonitorEnabled(context) ||
+            isFpsRecorderEnabled(context) || isTemperatureMonitorEnabled(context)
     }
 
     fun isMiniMonitorEnabled(context: Context): Boolean {
@@ -47,6 +50,16 @@ object OverlayPrefs {
 
     fun setMiniMonitorEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_MINI_ENABLED, enabled).apply()
+    }
+
+    // The mini monitor's third column: false (default) shows FPS, true
+    // shows used-RAM%.
+    fun isMiniMonitorRamMode(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_MINI_RAM_MODE, false)
+    }
+
+    fun setMiniMonitorRamMode(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_MINI_RAM_MODE, enabled).apply()
     }
 
     fun isProcessMonitorEnabled(context: Context): Boolean {
@@ -71,6 +84,14 @@ object OverlayPrefs {
 
     fun setFpsRecorderEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_FPS_RECORDER_ENABLED, enabled).apply()
+    }
+
+    fun isTemperatureMonitorEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_TEMPERATURE_ENABLED, false)
+    }
+
+    fun setTemperatureMonitorEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_TEMPERATURE_ENABLED, enabled).apply()
     }
 
     fun isDualBattery(context: Context): Boolean {

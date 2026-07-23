@@ -1,16 +1,22 @@
 /**
- * Compact floating readout: CPU / GPU / FPS / battery in a single row, no
- * ring charts. Non-interactive by design (fixed position, not draggable,
- * not touchable) — meant to sit unobtrusively during gameplay rather than
- * be interacted with like the main FloatMonitor.
+ * Compact floating readout: CPU/GPU load as tiny inline bar charts plus
+ * frequency numbers, a third column (FPS, or used-RAM% if that setting is
+ * on), and battery. Non-interactive by design (fixed position, not
+ * draggable) — meant to sit unobtrusively during gameplay rather than be
+ * interacted with like the main FloatMonitor.
  *
- * "dominant big-core load" logic is preserved as-is: a single saturated
- * performance core stalls frame pacing even when the average load across
- * all cores looks fine, so whichever number is worse gets shown.
+ * Updated to match the current Scene app: the headline CPU number is now
+ * the highest active cluster frequency (MHz) rather than load% — load
+ * moved to the new per-core bar chart instead. GPU gained the same
+ * chart+frequency pairing (as a rolling history strip, since there's only
+ * one GPU value per tick rather than one per core). Battery's alternating
+ * cell switched from raw current (mA) to computed power (W), same
+ * current×voltage math FloatMonitor already uses for its own #PWR line.
  */
 package com.thermaloverlay.overlay.ui
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -53,6 +59,9 @@ class FloatMonitorMini(private val mContext: Context) {
         }
         if (batteryManager == null) {
             batteryManager = mContext.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        }
+        if (activityManager == null) {
+            activityManager = mContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         }
 
         show = true
@@ -133,19 +142,39 @@ class FloatMonitorMini(private val mContext: Context) {
     }
 
     private var view: View? = null
-    private var cpuLoadText: TextView? = null
-    private var gpuLoadText: TextView? = null
-    private var fpsText: TextView? = null
+    private var cpuChart: CpuChartBarView? = null
+    private var cpuFreqText: TextView? = null
+    private var gpuChart: CpuChartBarView? = null
+    private var gpuFreqText: TextView? = null
+    private var col3Text: TextView? = null
     private var batteryText: TextView? = null
 
     private val myHandler = Handler(Looper.getMainLooper())
     private var coreCount = -1
     private var clusters = ArrayList<Array<String>>()
+    private var clustersFreq = ArrayList<String>()
     private var batteryManager: BatteryManager? = null
+    private var activityManager: ActivityManager? = null
+    private val memoryInfo = ActivityManager.MemoryInfo()
 
-    // Alternates the last cell between battery current (mA) and temperature
+    // Recomputing RAM% is heavier than the other readings here, so (like
+    // the source app) it only refreshes every 3rd tick — the third column
+    // keeps showing its last value in between.
+    private var ramTickCounter = 0
+    private var lastRamText = "--"
+
+    // Alternates the last cell between battery power (W) and temperature
     // every other tick, same as the source app — one text slot, two readings.
     private var pollingPhase = 0
+
+    private fun subFreqStr(freq: String?): String {
+        if (freq == null) return ""
+        return when {
+            freq.length > 3 -> freq.substring(0, freq.length - 3)
+            freq.isEmpty() -> "0"
+            else -> freq
+        }
+    }
 
     private fun updateInfo() {
         pollingPhase = (pollingPhase + 1) % 4
@@ -155,27 +184,40 @@ class FloatMonitorMini(private val mContext: Context) {
             clusters = cpuFrequencyUtils.getClusterInfo()
         }
 
-        val gpuLoad = GpuUtils.getGpuLoad()
-        var cpuLoad = cpuLoadUtils.cpuLoadSum
-        val loads = cpuLoadUtils.cpuLoad
-
-        val centerIndex = coreCount / 2
-        var bigCoreLoadMax = 0.0
-        if (centerIndex >= 2) {
-            try {
-                for (i in centerIndex until coreCount) {
-                    val coreLoad = loads[i] ?: continue
-                    if (coreLoad > bigCoreLoadMax) bigCoreLoadMax = coreLoad
-                }
-                if (bigCoreLoadMax > 70 && bigCoreLoadMax > cpuLoad) {
-                    cpuLoad = bigCoreLoadMax
-                }
-            } catch (ex: Exception) {
+        // Per-cluster frequencies, same computation FloatMonitor already
+        // does for its own headline number — the highest one is shown here
+        // too, replacing the old load% readout.
+        clustersFreq.clear()
+        for (clusterIndex in 0 until clusters.size) {
+            clustersFreq.add(cpuFrequencyUtils.getCurrentFrequency(clusterIndex))
+        }
+        var maxFreq = 0
+        for (item in clustersFreq) {
+            if (item.isNotEmpty()) {
+                item.toIntOrNull()?.let { if (it > maxFreq) maxFreq = it }
             }
         }
-        if (cpuLoad < 0) cpuLoad = 0.0
 
-        val fps = fpsUtils.currentFps
+        val loads = cpuLoadUtils.cpuLoad
+        val coreLoads = Array(coreCount) { i -> (loads[i] ?: 0.0).toInt() }
+
+        val gpuLoad = GpuUtils.getGpuLoad()
+        val gpuFreq = GpuUtils.getGpuFreq().toIntOrNull() ?: -1
+
+        val fps = fpsUtils.fps
+
+        val ramMode = OverlayPrefs.isMiniMonitorRamMode(mContext)
+        if (ramMode) {
+            ramTickCounter = (ramTickCounter + 1) % 3
+            if (ramTickCounter == 0) {
+                activityManager?.getMemoryInfo(memoryInfo)
+                val totalMem = (memoryInfo.totalMem / 1024 / 1024f).toInt()
+                val availMem = (memoryInfo.availMem / 1024 / 1024f).toInt()
+                if (totalMem > 0) {
+                    lastRamText = "${(totalMem - availMem) * 100 / totalMem}%"
+                }
+            }
+        }
 
         BatteryStatusReader.update(mContext)
         var battInfo: String? = null
@@ -184,22 +226,31 @@ class FloatMonitorMini(private val mContext: Context) {
             val dualBatteryMultiplier = if (OverlayPrefs.isDualBattery(mContext)) 2 else 1
             val nowMa = now?.let { (it / BatteryStatusReader.currentUnitDivisor) * dualBatteryMultiplier }
             nowMa?.let {
-                if (it > -20000 && it < 20000) {
-                    battInfo = (if (it > 0) "+$it" else "$it") + "mA"
+                if (it > -20000 && it < 20000 && BatteryStatusReader.batteryVoltage > 0) {
+                    val watts = (it * BatteryStatusReader.batteryVoltage) / 1000.0
+                    battInfo = if (watts >= 100 || watts <= -100) {
+                        String.format("%.1fW", watts)
+                    } else {
+                        String.format("%.2fW", watts)
+                    }
                 }
             }
         }
         if (battInfo == null) {
-            battInfo = "${BatteryStatusReader.temperatureCurrent}°C"
+            battInfo = "${BatteryStatusReader.temperatureCurrent}\u2103"
         }
 
         myHandler.post {
             // Guarded like FloatMonitor.updateInfo(): views may already be
             // detached mid-hide, and this callback runs on the main thread.
             try {
-                cpuLoadText?.text = "${cpuLoad.toInt()}%"
-                gpuLoadText?.text = if (gpuLoad > -1) "$gpuLoad%" else "--"
-                fpsText?.text = fps ?: "--"
+                cpuChart?.setData(coreLoads)
+                cpuFreqText?.text = subFreqStr(maxFreq.toString())
+                gpuChart?.pushRolling(100f, 100f - gpuLoad)
+                gpuFreqText?.text = if (gpuFreq > -1) gpuFreq.toString() else "--"
+                col3Text?.text = if (ramMode) lastRamText else {
+                    if (fps >= 100) fps.toInt().toString() else String.format("%.1f", fps)
+                }
                 batteryText?.text = battInfo
             } catch (ex: Exception) {
             }
@@ -239,10 +290,26 @@ class FloatMonitorMini(private val mContext: Context) {
 
     private fun setUpView(context: Context): View {
         view = LayoutInflater.from(context).inflate(R.layout.fw_monitor_mini, null)
-        cpuLoadText = view!!.findViewById(R.id.fw_cpu_load)
-        gpuLoadText = view!!.findViewById(R.id.fw_gpu_load)
-        fpsText = view!!.findViewById(R.id.fw_fps)
+        cpuChart = view!!.findViewById(R.id.fw_cpu_chart)
+        cpuFreqText = view!!.findViewById(R.id.fw_cpu_freq)
+        gpuChart = view!!.findViewById(R.id.fw_gpu_chart)
+        gpuFreqText = view!!.findViewById(R.id.fw_gpu_freq)
+        col3Text = view!!.findViewById(R.id.fw_mini_col3_value)
         batteryText = view!!.findViewById(R.id.fw_battery_temp)
+
+        val accent = context.getColor(R.color.accent)
+        cpuChart?.apply {
+            setMinAlpha(225)
+            setMaxAlpha(225)
+            setAccentColor(accent)
+        }
+        gpuChart?.apply {
+            setMaxHistory(5)
+            setMinAlpha(225)
+            setMaxAlpha(225)
+            setAccentColor(accent)
+        }
+
         return view!!
     }
 

@@ -18,6 +18,7 @@ import com.thermaloverlay.overlay.ui.FloatMonitor
 import com.thermaloverlay.overlay.ui.FloatMonitorMini
 import com.thermaloverlay.overlay.ui.FloatMonitorThreads
 import com.thermaloverlay.overlay.ui.FloatTaskManager
+import com.thermaloverlay.overlay.ui.FloatTemperature
 
 class OverlayService : Service() {
     private var floatMonitor: FloatMonitor? = null
@@ -25,6 +26,7 @@ class OverlayService : Service() {
     private var floatTaskManager: FloatTaskManager? = null
     private var floatMonitorThreads: FloatMonitorThreads? = null
     private var floatFpsWatch: FloatFpsWatch? = null
+    private var floatTemperature: FloatTemperature? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -54,6 +56,10 @@ class OverlayService : Service() {
         if (OverlayPrefs.isFpsRecorderEnabled(this) && !FloatFpsWatch.show) {
             floatFpsWatch = FloatFpsWatch(this)
             floatFpsWatch?.showPopupWindow()
+        }
+        if (OverlayPrefs.isTemperatureMonitorEnabled(this) && !FloatTemperature.show) {
+            floatTemperature = FloatTemperature(this)
+            floatTemperature?.showPopupWindow()
         }
 
         // Nothing to show (e.g. the QS tile was tapped after every monitor
@@ -129,6 +135,17 @@ class OverlayService : Service() {
                     floatFpsWatch = null
                 }
             }
+            ACTION_TOGGLE_TEMPERATURE -> {
+                if (OverlayPrefs.isTemperatureMonitorEnabled(this)) {
+                    if (!FloatTemperature.show) {
+                        floatTemperature = FloatTemperature(this)
+                        floatTemperature?.showPopupWindow()
+                    }
+                } else {
+                    floatTemperature?.hidePopupWindow()
+                    floatTemperature = null
+                }
+            }
         }
         stopIfNothingEnabled()
         return START_STICKY
@@ -151,6 +168,8 @@ class OverlayService : Service() {
         floatMonitorThreads = null
         floatFpsWatch?.hidePopupWindow()
         floatFpsWatch = null
+        floatTemperature?.hidePopupWindow()
+        floatTemperature = null
         OverlayPrefs.setEnabled(this, false)
         super.onDestroy()
     }
@@ -185,5 +204,6 @@ class OverlayService : Service() {
         const val ACTION_TOGGLE_PROCESS = "com.thermaloverlay.overlay.action.TOGGLE_PROCESS"
         const val ACTION_TOGGLE_THREAD = "com.thermaloverlay.overlay.action.TOGGLE_THREAD"
         const val ACTION_TOGGLE_FPS = "com.thermaloverlay.overlay.action.TOGGLE_FPS"
+        const val ACTION_TOGGLE_TEMPERATURE = "com.thermaloverlay.overlay.action.TOGGLE_TEMPERATURE"
     }
 }

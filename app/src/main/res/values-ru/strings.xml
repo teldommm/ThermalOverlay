@@ -25,6 +25,7 @@
 
     <string name="mini_monitor_label">Мини-монитор</string>
     <string name="mini_monitor_desc">Компактная строка CPU/GPU/FPS/батарея, фиксированная позиция, не перетаскивается</string>
+    <string name="mini_monitor_ram_label">Показывать RAM% вместо FPS в третьей колонке</string>
 
     <string name="process_monitor_label">Монитор процессов</string>
     <string name="process_monitor_desc">Перетаскиваемый список процессов с фильтром Apps/All и завершением по тапу</string>
@@ -43,6 +44,9 @@
 
     <string name="fps_recorder_label">Рекордер кадровой частоты</string>
     <string name="fps_recorder_desc">Индикатор FPS с кнопкой записи; логирует FPS/CPU/GPU/батарею за сессию</string>
+
+    <string name="temperature_monitor_label">Монитор температуры</string>
+    <string name="temperature_monitor_desc">Датчики CPU/GPU/DDR/SoC/камеры — какие есть на устройстве</string>
 
     <string name="fps_history_button">История кадровой частоты</string>
     <string name="fps_chart_title">История кадровой частоты</string>

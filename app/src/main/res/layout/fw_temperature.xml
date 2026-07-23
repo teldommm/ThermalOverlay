@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_gravity="top"
+    android:background="@drawable/shape_corner"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/fw_info"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:minWidth="75dp"
+        android:paddingStart="4dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="4dp"
+        android:paddingBottom="4dp"
+        android:fontFamily="monospace"
+        android:text="Loading\u2026\u2026"
+        android:textColor="#ffffffff"
+        android:textSize="8dp"
+        android:textStyle="bold"
+        android:typeface="monospace" />
+</LinearLayout>

@@ -71,8 +71,10 @@ class FloatTaskManager(private val context: Context) {
 
             mView!!.setOnTouchListener(object : View.OnTouchListener {
                 private var isTouchDown = false
-                private var touchStartX = 0f
-                private var touchStartY = 0f
+                private var touchStartRawX = 0f
+                private var touchStartRawY = 0f
+                private var paramStartX = 0
+                private var paramStartY = 0
 
                 @SuppressLint("ClickableViewAccessibility")
                 override fun onTouch(v: View?, event: MotionEvent?): Boolean {
@@ -80,19 +82,33 @@ class FloatTaskManager(private val context: Context) {
                     if (event != null) {
                         when (event.action) {
                             MotionEvent.ACTION_DOWN -> {
-                                touchStartX = event.x
-                                touchStartY = event.y
+                                // Anchor to raw (screen) coordinates only, never
+                                // mixed with event.x/y (view-local) — those two
+                                // frames can differ by the status bar's height
+                                // depending on inset handling, which is exactly
+                                // what caused the window to jump down on every
+                                // touch whenever the status bar was visible.
+                                touchStartRawX = event.rawX
+                                touchStartRawY = event.rawY
+                                paramStartX = params.x
+                                paramStartY = params.y
                                 isTouchDown = true
                             }
                             MotionEvent.ACTION_MOVE -> {
                                 if (isTouchDown) {
-                                    params.x = (event.rawX - touchStartX).toInt()
-                                    params.y = (event.rawY - touchStartY).toInt()
+                                    params.x = paramStartX + (event.rawX - touchStartRawX).toInt()
+                                    params.y = paramStartY + (event.rawY - touchStartRawY).toInt()
                                     mWindowManager!!.updateViewLayout(v, params)
                                 }
                             }
                             MotionEvent.ACTION_UP -> {
-                                monitorStorage.edit().putInt("x", params.x).putInt("y", params.y).apply()
+                                val moved = Math.abs(event.rawX - touchStartRawX) > 15 ||
+                                    Math.abs(event.rawY - touchStartRawY) > 15
+                                if (moved) {
+                                    monitorStorage.edit().putInt("x", params.x).putInt("y", params.y).apply()
+                                }
+                                isTouchDown = false
+                                if (moved) return true
                             }
                             MotionEvent.ACTION_OUTSIDE,
                             MotionEvent.ACTION_CANCEL -> {

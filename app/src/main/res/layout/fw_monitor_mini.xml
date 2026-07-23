@@ -1,102 +1,98 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/fw_chart_list"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:layout_gravity="top"
-    android:background="@drawable/shape_corner"
-    android:orientation="vertical">
+    android:background="@drawable/monitor_game_bg"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="3dp"
+    android:paddingEnd="1.5dp">
 
-    <LinearLayout
+    <ImageView
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:src="@drawable/ic_cpu" />
+
+    <com.thermaloverlay.overlay.ui.CpuChartBarView
+        android:id="@+id/fw_cpu_chart"
+        android:layout_width="20dp"
+        android:layout_height="7.5dp"
+        android:layout_marginStart="1dp"
+        android:layout_marginBottom="0.5dp" />
+
+    <TextView
+        android:id="@+id/fw_cpu_freq"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="8dp"
-        android:paddingTop="3dp"
-        android:paddingBottom="4dp">
+        android:layout_marginStart="1dp"
+        android:fontFamily="monospace"
+        android:lineHeight="1dp"
+        android:minWidth="20dp"
+        android:text="-MHz"
+        android:textColor="#ffffff"
+        android:textSize="7.5dp"
+        android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:text="CPU:"
-            android:textAlignment="center"
-            android:textColor="#dddddd"
-            android:textSize="8dp"
-            android:textStyle="bold" />
+    <ImageView
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:layout_marginStart="2dp"
+        android:src="@drawable/ic_gpu" />
 
-        <TextView
-            android:id="@+id/fw_cpu_load"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_marginStart="2dp"
-            android:minWidth="20dp"
-            android:text="--"
-            android:textColor="#ffffff"
-            android:fontFamily="monospace"
-            android:textSize="8dp"
-            android:textStyle="bold" />
+    <com.thermaloverlay.overlay.ui.CpuChartBarView
+        android:id="@+id/fw_gpu_chart"
+        android:layout_width="5dp"
+        android:layout_height="7.5dp"
+        android:layout_marginStart="1.5dp"
+        android:layout_marginBottom="0.5dp" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_marginStart="5dp"
-            android:text="GPU:"
-            android:textColor="#dddddd"
-            android:textSize="8dp"
-            android:textStyle="bold" />
+    <TextView
+        android:id="@+id/fw_gpu_freq"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="1dp"
+        android:fontFamily="monospace"
+        android:minWidth="20dp"
+        android:text="-MHz"
+        android:textColor="#ffffff"
+        android:textSize="7.5dp"
+        android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/fw_gpu_load"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_marginStart="2dp"
-            android:minWidth="20dp"
-            android:text="--"
-            android:textColor="#ffffff"
-            android:fontFamily="monospace"
-            android:textSize="8dp"
-            android:textStyle="bold" />
+    <ImageView
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:layout_marginStart="2dp"
+        android:src="@drawable/ic_frame" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_marginStart="5dp"
-            android:text="FPS:"
-            android:textAlignment="center"
-            android:textColor="#dddddd"
-            android:textSize="8dp"
-            android:textStyle="bold" />
+    <TextView
+        android:id="@+id/fw_mini_col3_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="1dp"
+        android:fontFamily="monospace"
+        android:minWidth="22dp"
+        android:text="--"
+        android:textColor="#ffffff"
+        android:textSize="8dp"
+        android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/fw_fps"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_marginStart="2dp"
-            android:minWidth="22dp"
-            android:text="--"
-            android:textColor="#ffffff"
-            android:fontFamily="monospace"
-            android:textSize="8dp"
-            android:textStyle="bold" />
+    <ImageView
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:layout_marginStart="2dp"
+        android:src="@drawable/ic_battery" />
 
-        <TextView
-            android:id="@+id/fw_battery_temp"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_marginStart="5dp"
-            android:minWidth="34dp"
-            android:text="--"
-            android:textAlignment="center"
-            android:textColor="#ffffff"
-            android:fontFamily="monospace"
-            android:textSize="8dp"
-            android:textStyle="bold" />
-    </LinearLayout>
+    <TextView
+        android:id="@+id/fw_battery_temp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="1dp"
+        android:fontFamily="monospace"
+        android:minWidth="33dp"
+        android:text="--W"
+        android:textColor="#ffffff"
+        android:textSize="7.5dp"
+        android:textStyle="bold" />
 </LinearLayout>

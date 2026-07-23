@@ -32,10 +32,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var accessibilityButton: Button
     private lateinit var loadMonitorSwitch: Switch
     private lateinit var dualBatterySwitch: Switch
+    private lateinit var miniMonitorRamSwitch: Switch
     private lateinit var miniMonitorSwitch: Switch
     private lateinit var processMonitorSwitch: Switch
     private lateinit var threadMonitorSwitch: Switch
     private lateinit var fpsRecorderSwitch: Switch
+    private lateinit var temperatureMonitorSwitch: Switch
     private lateinit var rootWarning: LinearLayout
     private lateinit var rootWarningText: TextView
     private lateinit var freqControlButton: Button
@@ -63,10 +65,12 @@ class MainActivity : AppCompatActivity() {
         accessibilityButton = findViewById(R.id.accessibility_button)
         loadMonitorSwitch = findViewById(R.id.load_monitor_switch)
         dualBatterySwitch = findViewById(R.id.dual_battery_switch)
+        miniMonitorRamSwitch = findViewById(R.id.mini_monitor_ram_switch)
         miniMonitorSwitch = findViewById(R.id.mini_monitor_switch)
         processMonitorSwitch = findViewById(R.id.process_monitor_switch)
         threadMonitorSwitch = findViewById(R.id.thread_monitor_switch)
         fpsRecorderSwitch = findViewById(R.id.fps_recorder_switch)
+        temperatureMonitorSwitch = findViewById(R.id.temperature_monitor_switch)
         rootWarning = findViewById(R.id.root_warning)
         rootWarningText = findViewById(R.id.root_warning_text)
         freqControlButton = findViewById(R.id.freq_control_button)
@@ -93,6 +97,11 @@ class MainActivity : AppCompatActivity() {
             OverlayPrefs.setDualBattery(this, checked)
         }
 
+        miniMonitorRamSwitch.setOnCheckedChangeListener { _, checked ->
+            if (suppressSwitchEvents) return@setOnCheckedChangeListener
+            OverlayPrefs.setMiniMonitorRamMode(this, checked)
+        }
+
         bindMonitorSwitch(
             loadMonitorSwitch, OverlayService.ACTION_TOGGLE_LOAD, requireAccessibility = false,
             isEnabled = OverlayPrefs::isLoadMonitorEnabled, setEnabled = OverlayPrefs::setLoadMonitorEnabled
@@ -112,6 +121,10 @@ class MainActivity : AppCompatActivity() {
         bindMonitorSwitch(
             fpsRecorderSwitch, OverlayService.ACTION_TOGGLE_FPS, requireAccessibility = true,
             isEnabled = OverlayPrefs::isFpsRecorderEnabled, setEnabled = OverlayPrefs::setFpsRecorderEnabled
+        )
+        bindMonitorSwitch(
+            temperatureMonitorSwitch, OverlayService.ACTION_TOGGLE_TEMPERATURE, requireAccessibility = false,
+            isEnabled = OverlayPrefs::isTemperatureMonitorEnabled, setEnabled = OverlayPrefs::setTemperatureMonitorEnabled
         )
 
         checkRootAccess()
@@ -228,10 +241,12 @@ class MainActivity : AppCompatActivity() {
         suppressSwitchEvents = true
         loadMonitorSwitch.isChecked = OverlayPrefs.isLoadMonitorEnabled(this)
         dualBatterySwitch.isChecked = OverlayPrefs.isDualBattery(this)
+        miniMonitorRamSwitch.isChecked = OverlayPrefs.isMiniMonitorRamMode(this)
         miniMonitorSwitch.isChecked = OverlayPrefs.isMiniMonitorEnabled(this)
         processMonitorSwitch.isChecked = OverlayPrefs.isProcessMonitorEnabled(this)
         threadMonitorSwitch.isChecked = OverlayPrefs.isThreadMonitorEnabled(this)
         fpsRecorderSwitch.isChecked = OverlayPrefs.isFpsRecorderEnabled(this)
+        temperatureMonitorSwitch.isChecked = OverlayPrefs.isTemperatureMonitorEnabled(this)
         suppressSwitchEvents = false
     }
 }
