@@ -15,12 +15,18 @@
 package com.thermaloverlay.overlay.activities
 
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
@@ -183,7 +189,28 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         rightDimensionLabel.text = when (next) {
             FpsDataView.Dimension.TEMPERATURE -> getString(R.string.fps_chart_dimension_temperature)
             FpsDataView.Dimension.CAPACITY -> getString(R.string.fps_chart_dimension_battery)
-            FpsDataView.Dimension.LOAD -> getString(R.string.fps_chart_dimension_load)
+            FpsDataView.Dimension.LOAD -> {
+                // Colored to match the chart's own CPU (pink) / GPU (blue)
+                // line colors, same as the source app's label. Found by
+                // substring rather than a fixed position, since the Russian
+                // string reorders around "CPU"/"GPU" (kept as literal
+                // English abbreviations in both locales).
+                val text = getString(R.string.fps_chart_dimension_load)
+                SpannableString(text).apply {
+                    val cpuStart = text.indexOf("CPU")
+                    if (cpuStart >= 0) {
+                        val cpuEnd = cpuStart + 3
+                        setSpan(ForegroundColorSpan(Color.parseColor("#80fc6bc5")), cpuStart, cpuEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        setSpan(StyleSpan(Typeface.BOLD), cpuStart, cpuEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                    val gpuStart = text.indexOf("GPU")
+                    if (gpuStart >= 0) {
+                        val gpuEnd = gpuStart + 3
+                        setSpan(ForegroundColorSpan(Color.parseColor("#8087d3ff")), gpuStart, gpuEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        setSpan(StyleSpan(Typeface.BOLD), gpuStart, gpuEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                }
+            }
         }
     }
 

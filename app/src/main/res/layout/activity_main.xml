@@ -62,57 +62,63 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:background="@drawable/bg_card"
-            android:padding="20dp"
-            android:layout_marginBottom="16dp">
+            android:padding="20dp">
 
-            <TextView
-                android:id="@+id/status_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+            <Button
+                android:id="@+id/overlay_permission_button"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_card"
                 android:textColor="@color/text_primary"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="16dp" />
+                android:textAllCaps="false"
+                android:textSize="13sp"
+                android:elevation="0dp"
+                android:layout_marginBottom="16dp"
+                android:text="@string/overlay_permission_status_disabled" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-                <Button
-                    android:id="@+id/start_button"
+                <LinearLayout
                     android:layout_width="0dp"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/bg_button_start"
-                    android:textColor="#0a1f18"
-                    android:textStyle="bold"
-                    android:textAllCaps="false"
-                    android:elevation="0dp"
-                    android:text="@string/start_overlay" />
+                    android:orientation="vertical"
+                    android:layout_marginEnd="12dp">
 
-                <Button
-                    android:id="@+id/stop_button"
-                    android:layout_width="0dp"
-                    android:layout_height="48dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_button_stop"
-                    android:textColor="#ffffff"
-                    android:textStyle="bold"
-                    android:textAllCaps="false"
-                    android:elevation="0dp"
-                    android:text="@string/stop_overlay" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/load_monitor_label"
+                        android:textColor="@color/text_primary"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/load_monitor_desc"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/load_monitor_switch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
 
             </LinearLayout>
-        </LinearLayout>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/bg_card"
-            android:padding="20dp">
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="16dp"
+                android:background="@color/surface_dark" />
 
             <LinearLayout
                 android:layout_width="match_parent"

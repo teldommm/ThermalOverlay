@@ -17,6 +17,12 @@
     <string name="dual_battery_label">Dual battery</string>
     <string name="dual_battery_desc">Doubles the #PWR reading for devices with two battery cells</string>
 
+    <string name="overlay_permission_status_enabled">Overlay permission: enabled</string>
+    <string name="overlay_permission_status_disabled">Overlay permission: tap to enable</string>
+
+    <string name="load_monitor_label">Load monitor</string>
+    <string name="load_monitor_desc">CPU/GPU frequency, load, and battery HUD</string>
+
     <string name="mini_monitor_label">Mini monitor</string>
     <string name="mini_monitor_desc">Compact CPU/GPU/FPS/battery row, fixed position, not draggable</string>
 

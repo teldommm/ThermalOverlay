@@ -3,7 +3,10 @@
  * Tapping record starts a session that logs FPS/CPU/GPU/battery once a
  * second to FpsWatchStore; the session auto-stops if the foreground app
  * changes or the screen turns off, so a recording never silently spans two
- * different things.
+ * different things. The CPU reading uses the same "dominant big core"
+ * substitution as the mini monitor: if a big core is pegged above 70% and
+ * higher than the average, that's shown instead, since a single saturated
+ * core is usually what actually causes the stutter.
  *
  * Design notes: FPS comes from the existing FpsUtils (which already covers
  * an fpsgo-status / SurfaceFlinger-binder-call fallback chain, so there's
@@ -35,6 +38,7 @@ import com.thermaloverlay.overlay.OverlayPrefs
 import com.thermaloverlay.overlay.R
 import com.thermaloverlay.overlay.data.GlobalStatus
 import com.thermaloverlay.overlay.metrics.BatteryStatusReader
+import com.thermaloverlay.overlay.metrics.CpuFrequencyUtils
 import com.thermaloverlay.overlay.metrics.CpuLoadUtils
 import com.thermaloverlay.overlay.metrics.FpsUtils
 import com.thermaloverlay.overlay.metrics.GpuUtils
@@ -47,6 +51,8 @@ class FloatFpsWatch(private val mContext: Context) {
     private val fpsWatchStore = FpsWatchStore(mContext)
     private val fpsUtils = FpsUtils()
     private val cpuLoadUtils = CpuLoadUtils()
+    private val cpuFrequencyUtils = CpuFrequencyUtils()
+    private var coreCount = -1
 
     private var sessionId = -1L
     private var sessionApp: String? = null
@@ -152,7 +158,25 @@ class FloatFpsWatch(private val mContext: Context) {
     private fun updateInfo() {
         val fps = fpsUtils.fps
         val gpuLoad = GpuUtils.getGpuLoad()
+
+        if (coreCount < 1) coreCount = cpuFrequencyUtils.getCoreCount()
+
         var cpuLoad = cpuLoadUtils.cpuLoadSum
+        val loads = cpuLoadUtils.cpuLoad
+        val centerIndex = coreCount / 2
+        var bigCoreLoadMax = 0.0
+        if (centerIndex >= 2) {
+            try {
+                for (i in centerIndex until coreCount) {
+                    val coreLoad = loads[i] ?: continue
+                    if (coreLoad > bigCoreLoadMax) bigCoreLoadMax = coreLoad
+                }
+                if (bigCoreLoadMax > 70 && bigCoreLoadMax > cpuLoad) {
+                    cpuLoad = bigCoreLoadMax
+                }
+            } catch (ex: Exception) {
+            }
+        }
         if (cpuLoad < 0) cpuLoad = 0.0
 
         if (sessionId > 0 && GlobalStatus.lastPackageName.isNotEmpty() && GlobalStatus.lastPackageName != sessionApp) {

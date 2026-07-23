@@ -40,6 +40,14 @@ class OverlayTileService : TileService() {
             return
         }
 
+        // OverlayService now stops itself the moment no monitor is enabled
+        // (see stopIfNothingEnabled()) — if every switch was left off, make
+        // sure there's at least something to show, or the service would
+        // start and immediately stop again right under this tap.
+        if (!OverlayPrefs.anyMonitorEnabled(this)) {
+            OverlayPrefs.setLoadMonitorEnabled(this, true)
+        }
+
         val serviceIntent = Intent(this, OverlayService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)

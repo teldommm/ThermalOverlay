@@ -17,6 +17,12 @@
     <string name="dual_battery_label">Двойная батарея</string>
     <string name="dual_battery_desc">Удваивает показатель #PWR для устройств с двумя аккумуляторными ячейками</string>
 
+    <string name="overlay_permission_status_enabled">Разрешение на оверлей: включено</string>
+    <string name="overlay_permission_status_disabled">Разрешение на оверлей: нажмите, чтобы включить</string>
+
+    <string name="load_monitor_label">Основной монитор</string>
+    <string name="load_monitor_desc">HUD с частотой/нагрузкой CPU/GPU и батареей</string>
+
     <string name="mini_monitor_label">Мини-монитор</string>
     <string name="mini_monitor_desc">Компактная строка CPU/GPU/FPS/батарея, фиксированная позиция, не перетаскивается</string>
 

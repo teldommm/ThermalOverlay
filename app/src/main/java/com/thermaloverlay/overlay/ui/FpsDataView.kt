@@ -155,6 +155,11 @@ class FpsDataView : View {
             lastX = currentX
             lastY = currentY
         }
+        // One more segment out to the end of the last sample's time slot —
+        // otherwise the line visibly stops one slot-width short of the
+        // right edge.
+        val endX = (samples.size / 60f) * ratioX + innerPadding
+        canvas.drawLine(lastX, lastY, endX, startY - samples.last() * ratioY, paint)
     }
 
     private fun fpsScale(samples: List<Float>): Pair<Int, List<Int>> {

@@ -29,12 +29,13 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForeground(NOTIFICATION_ID, buildNotification())
+        OverlayPrefs.setEnabled(this, true)
 
         // Kill a simpleperf stream orphaned by a previous process death
         // (shell call — must not run on the main thread).
         Thread { CpuCyclesUtils.cleanupOrphans() }.start()
 
-        if (!FloatMonitor.show) {
+        if (OverlayPrefs.isLoadMonitorEnabled(this) && !FloatMonitor.show) {
             floatMonitor = FloatMonitor(this)
             floatMonitor?.showPopupWindow()
         }
@@ -54,6 +55,10 @@ class OverlayService : Service() {
             floatFpsWatch = FloatFpsWatch(this)
             floatFpsWatch?.showPopupWindow()
         }
+
+        // Nothing to show (e.g. the QS tile was tapped after every monitor
+        // had been switched off) — don't sit around as a bare notification.
+        stopIfNothingEnabled()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -63,7 +68,23 @@ class OverlayService : Service() {
                 return START_NOT_STICKY
             }
             // Lets MainActivity flip these switches live, without tearing
-            // down the whole foreground service and the main HUD.
+            // down the whole foreground service — and, since every monitor
+            // is independently switchable now, without a separate Start/Stop:
+            // the service starts itself the moment any one of these turns on
+            // (MainActivity just calls startForegroundService regardless of
+            // whether it's already running), and stopIfNothingEnabled() below
+            // tears it down once the last one turns off.
+            ACTION_TOGGLE_LOAD -> {
+                if (OverlayPrefs.isLoadMonitorEnabled(this)) {
+                    if (!FloatMonitor.show) {
+                        floatMonitor = FloatMonitor(this)
+                        floatMonitor?.showPopupWindow()
+                    }
+                } else {
+                    floatMonitor?.hidePopupWindow()
+                    floatMonitor = null
+                }
+            }
             ACTION_TOGGLE_MINI -> {
                 if (OverlayPrefs.isMiniMonitorEnabled(this)) {
                     if (!FloatMonitorMini.show) {
@@ -109,7 +130,14 @@ class OverlayService : Service() {
                 }
             }
         }
+        stopIfNothingEnabled()
         return START_STICKY
+    }
+
+    private fun stopIfNothingEnabled() {
+        if (!OverlayPrefs.anyMonitorEnabled(this)) {
+            stopSelf()
+        }
     }
 
     override fun onDestroy() {
@@ -152,6 +180,7 @@ class OverlayService : Service() {
         private const val CHANNEL_ID = "perf_overlay_service"
         private const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "com.thermaloverlay.overlay.action.STOP"
+        const val ACTION_TOGGLE_LOAD = "com.thermaloverlay.overlay.action.TOGGLE_LOAD"
         const val ACTION_TOGGLE_MINI = "com.thermaloverlay.overlay.action.TOGGLE_MINI"
         const val ACTION_TOGGLE_PROCESS = "com.thermaloverlay.overlay.action.TOGGLE_PROCESS"
         const val ACTION_TOGGLE_THREAD = "com.thermaloverlay.overlay.action.TOGGLE_THREAD"

@@ -10,6 +10,7 @@ object OverlayPrefs {
     private const val PREFS = "perf_overlay_prefs"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_DUAL_BATTERY = "dual_battery"
+    private const val KEY_LOAD_ENABLED = "load_monitor_enabled"
     private const val KEY_MINI_ENABLED = "mini_monitor_enabled"
     private const val KEY_PROCESS_ENABLED = "process_monitor_enabled"
     private const val KEY_THREAD_ENABLED = "thread_monitor_enabled"
@@ -21,6 +22,23 @@ object OverlayPrefs {
 
     fun setEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    // Defaults to true (unlike the other four) so upgrading users keep
+    // seeing the monitor they always had, without needing to opt back in.
+    fun isLoadMonitorEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LOAD_ENABLED, true)
+    }
+
+    fun setLoadMonitorEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_LOAD_ENABLED, enabled).apply()
+    }
+
+    // Whether any monitor is switched on — the service has a reason to run
+    // when this is true, and no reason to when it's false.
+    fun anyMonitorEnabled(context: Context): Boolean {
+        return isLoadMonitorEnabled(context) || isMiniMonitorEnabled(context) ||
+            isProcessMonitorEnabled(context) || isThreadMonitorEnabled(context) || isFpsRecorderEnabled(context)
     }
 
     fun isMiniMonitorEnabled(context: Context): Boolean {
