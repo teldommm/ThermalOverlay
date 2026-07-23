@@ -1,5 +1,5 @@
 /**
- * Reads named thermal zones (CPU/GPU/DDR/SoC/Camera) from
+ * Reads named thermal zones (CPU/GPU/DDR/Camera) from
  * /sys/class/thermal/thermal_zone*, matching by the zone's `type` file
  * against keyword substrings.
  *
@@ -23,7 +23,6 @@ object TemperatureSensorUtils {
         Sensor("CPU", listOf("cpu")),
         Sensor("GPU", listOf("gpu")),
         Sensor("DDR", listOf("ddr")),
-        Sensor("SOC", listOf("soc")),
         Sensor("CAM", listOf("cam"))
     )
 
@@ -45,6 +44,15 @@ object TemperatureSensorUtils {
             }
         }
 
+        // Every real device exposes at least some thermal zones — finding
+        // none means the root shell probably wasn't ready yet (this can
+        // run on the very first tick, right as the daemon is still coming
+        // up), not that this device genuinely has zero zones. Don't
+        // memoize that as if it were a real, permanent answer, or a single
+        // early hiccup would leave the monitor showing only battery temp
+        // for the rest of the process's life.
+        if (zones.isEmpty()) return LinkedHashMap()
+
         val map = LinkedHashMap<String, List<String>>()
         for (sensor in sensorDefs) {
             val matches = zones.filter { (_, type) -> sensor.keywords.any { type.contains(it) } }
@@ -57,10 +65,9 @@ object TemperatureSensorUtils {
     }
 
     // label -> current reading in °C, only for sensors actually present on
-    // this device. A label backed by more than one zone (e.g. "SOC" often
-    // covers several per-core sensors) reports the highest of them — what
-    // matters for "is this chip running hot" is the worst reading, not an
-    // average.
+    // this device. A label backed by more than one zone reports the
+    // highest of them — what matters for "is this chip running hot" is
+    // the worst reading, not an average.
     fun readAvailable(): LinkedHashMap<String, Double> {
         val zones = resolveZones()
         val result = LinkedHashMap<String, Double>()

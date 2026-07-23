@@ -1,5 +1,5 @@
 /**
- * Small floating readout of named temperature sensors (CPU/GPU/DDR/SoC/
+ * Small floating readout of named temperature sensors (CPU/GPU/DDR/
  * Camera — whichever the device actually exposes) plus battery temp.
  * Draggable with double-tap-to-hide, same touch handling as FloatMonitor/
  * FloatTaskManager. Ported from vtools' FloatTemperature.

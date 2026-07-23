@@ -46,7 +46,7 @@
     <string name="fps_recorder_desc">Live FPS pill with a record button; logs FPS/CPU/GPU/battery per session</string>
 
     <string name="temperature_monitor_label">Temperature monitor</string>
-    <string name="temperature_monitor_desc">CPU/GPU/DDR/SoC/camera sensors, whichever the device exposes</string>
+    <string name="temperature_monitor_desc">CPU/GPU/DDR/camera sensors, whichever the device exposes</string>
 
     <string name="fps_history_button">Framerate history</string>
     <string name="fps_chart_title">Framerate history</string>

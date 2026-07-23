@@ -304,7 +304,7 @@ class FloatMonitorMini(private val mContext: Context) {
             setAccentColor(accent)
         }
         gpuChart?.apply {
-            setMaxHistory(5)
+            setMaxHistory(2)
             setMinAlpha(225)
             setMaxAlpha(225)
             setAccentColor(accent)
