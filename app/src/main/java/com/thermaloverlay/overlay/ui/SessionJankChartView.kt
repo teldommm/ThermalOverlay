@@ -39,8 +39,11 @@ class SessionJankChartView : View {
 
     // Shared gridline drawing (time axis + y-axis with the given key
     // values) — both kinds need this, only the data/scale differs.
-    private fun drawAxes(canvas: Canvas, sampleCount: Int, maxY: Int, keys: List<Int>, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float) {
-        SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, leftPadding, innerPadding, paddingTop, textSize)
+    private val density: Float get() = context.resources.displayMetrics.density
+
+    private fun drawAxes(canvas: Canvas, sampleCount: Int, maxY: Int, keys: List<Int>, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float,
+                        labelOffset: Float) {
+        SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, leftPadding, innerPadding, paddingTop, textSize, density)
 
         val ratioY = (height - innerPadding - paddingTop) / maxY
         paint.reset()
@@ -50,10 +53,11 @@ class SessionJankChartView : View {
         for (point in keys) {
             if (point > maxY) continue
             paint.color = Color.parseColor("#888888")
-            if (point > 0) canvas.drawText(point.toString(), leftPadding - 4f, paddingTop + (maxY - point) * ratioY + textSize / 2.2f, paint)
+            val gridY = paddingTop + ((maxY - point) * ratioY).toInt()
+            if (point > 0) canvas.drawText(point.toString(), leftPadding - labelOffset, gridY + textSize / 2.2f, paint)
             paint.strokeWidth = if (point == 0) 4f else 2f
             paint.color = if (point == 0) Color.parseColor("#888888") else Color.parseColor("#aa888888")
-            canvas.drawLine(leftPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
+            canvas.drawLine(leftPadding, gridY, width - innerPadding, gridY, paint)
         }
     }
 
@@ -64,14 +68,16 @@ class SessionJankChartView : View {
         val innerPadding = dp2px(18f)
         val paddingTop = dp2px(4f)
         val textSize = dp2px(8.5f)
-        // real FrameTimeView measures the label but adds no 4dp margin
-        val leftPadding = SessionChartRenderer.axisLabelPadding(
-            paint, 100, textSize, context.resources.displayMetrics.density, extraDp = 0f)
+        // FrameTimeView reaches the same place by a different route:
+        // `fMeasureText = measureText("999")` then `f5 = fMeasureText + f4`
+        // with f4 = 4dp — so it is not a special case after all.
+        val leftPadding = SessionChartRenderer.axisLabelPadding(paint, 100, textSize, density)
+        val labelOffset = 2f * density
 
         val samples = store.sessionFrameTimeData(sessionId)
         if (samples.isEmpty()) return
         val keys = listOf(0, 8, 16, 25, 33, 41, 50, 58, 66, 75, 83, 91, 100)
-        drawAxes(canvas, samples.size, 100, keys, leftPadding, innerPadding, paddingTop, textSize)
+        drawAxes(canvas, samples.size, 100, keys, leftPadding, innerPadding, paddingTop, textSize, labelOffset)
         SessionChartRenderer.drawStepSeries(
             canvas, paint, width, height, samples, 100,
             Color.parseColor("#87d3ff"), Paint.Style.STROKE, leftPadding, innerPadding, paddingTop

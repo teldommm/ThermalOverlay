@@ -156,13 +156,15 @@ class SessionLineChartView : View {
     // Confirmed twice: activity_fps_session.xml labels this axis "Capacity %"
     // on both charts, and PowerView/BatteryIOView both read it through
     // py0.w() = `select capacity from fps_record`.
+    private val density: Float get() = context.resources.displayMetrics.density
+
     private fun drawCapacitySecondary(canvas: Canvas, width: Int, height: Int, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float) {
         val capacitySamples = store.sessionCapacityData(sessionId)
         if (capacitySamples.isEmpty()) return
         SessionChartRenderer.drawDualAxisSeries(
             canvas, paint, width, height, capacitySamples, 100, listOf(20, 40, 60, 80, 100), axisOnRight = true,
             lineColor = Color.parseColor("#87d3ff"), gridColor = Color.parseColor("#4087d3ff"),
-            zeroLineColor = null, leftPadding, innerPadding, paddingTop, textSize
+            zeroLineColor = null, leftPadding, innerPadding, paddingTop, textSize, 2f * density
         )
     }
 
@@ -171,7 +173,6 @@ class SessionLineChartView : View {
         if (sessionId < 1) return
 
         val innerPadding = dp2px(18f)
-        val density = context.resources.displayMetrics.density
         val paddingTop = dp2px(4f)
         val textSize = dp2px(8.5f)
 
@@ -182,16 +183,16 @@ class SessionLineChartView : View {
 
             val (freqMaxY, freqKeys) = gpuFreqScale(freqSamples)
             val leftPadding = SessionChartRenderer.axisLabelPadding(paint, freqMaxY, textSize, density)
-            SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, freqSamples.size, leftPadding, innerPadding, paddingTop, textSize)
+            SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, freqSamples.size, leftPadding, innerPadding, paddingTop, textSize, density)
             SessionChartRenderer.drawDualAxisSeries(
                 canvas, paint, width, height, freqSamples, freqMaxY, freqKeys, axisOnRight = false,
                 lineColor = Color.parseColor("#87d3ff"), gridColor = Color.parseColor("#aa888888"),
-                zeroLineColor = Color.parseColor("#888888"), leftPadding, innerPadding, paddingTop, textSize
+                zeroLineColor = Color.parseColor("#888888"), leftPadding, innerPadding, paddingTop, textSize, 2f * density
             )
             SessionChartRenderer.drawDualAxisSeries(
                 canvas, paint, width, height, loadSamples, 100, listOf(50, 75, 90, 100), axisOnRight = true,
                 lineColor = Color.parseColor("#1474e4"), gridColor = Color.parseColor("#4087d3ff"),
-                zeroLineColor = null, leftPadding, innerPadding, paddingTop, textSize
+                zeroLineColor = null, leftPadding, innerPadding, paddingTop, textSize, 2f * density
             )
             return
         }
@@ -201,14 +202,14 @@ class SessionLineChartView : View {
 
         val (maxY, keys) = scaleFor(kind, samples)
         val leftPadding = SessionChartRenderer.axisLabelPadding(paint, maxY, textSize, density)
-        SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, samples.size, leftPadding, innerPadding, paddingTop, textSize)
+        SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, samples.size, leftPadding, innerPadding, paddingTop, textSize, density)
         // Power and battery current are also dual-series in the source —
         // CPU load% drawn alongside on the right axis — unlike
         // CpuTemperatureView/DDRView, confirmed genuinely single-series.
         SessionChartRenderer.drawDualAxisSeries(
             canvas, paint, width, height, samples, maxY, keys, axisOnRight = false,
             lineColor = lineColor(kind), gridColor = Color.parseColor("#aa888888"),
-            zeroLineColor = Color.parseColor("#888888"), leftPadding, innerPadding, paddingTop, textSize
+            zeroLineColor = Color.parseColor("#888888"), leftPadding, innerPadding, paddingTop, textSize, 2f * density
         )
         if (kind == Kind.POWER) {
             drawCapacitySecondary(canvas, width, height, leftPadding, innerPadding, paddingTop, textSize)

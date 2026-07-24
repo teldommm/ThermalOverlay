@@ -37,35 +37,56 @@ object SessionChartRenderer {
         return paint.measureText(nines) + extraDp * density
     }
 
+    /**
+     * Ported from the source's vj0.c(double). Two things the port had wrong:
+     * the day threshold is 1440 minutes (not 1140), and the smaller unit is
+     * omitted entirely when it rounds to zero — the source prints "5m", not
+     * "5m0s".
+     */
     fun minutesLabel(minutes: Double): String {
         return when {
-            minutes >= 1140 -> "${(minutes / 1140).toInt()}d${((minutes % 1140) / 60).toInt()}h"
-            minutes > 60 -> "${(minutes / 60).toInt()}h${(minutes % 60).toInt()}m"
+            minutes >= 1440 -> {
+                val hours = ((minutes % 1440) / 60).toInt()
+                "${(minutes / 1440).toInt()}d" + if (hours > 0) "${hours}h" else ""
+            }
+            minutes > 60 -> {
+                val mins = (minutes % 60).toInt()
+                "${(minutes / 60).toInt()}h" + if (mins > 0) "${mins}m" else ""
+            }
             minutes == 0.0 -> "0"
-            minutes >= 1 -> "${minutes.toInt()}m${(minutes % 1 * 60).toInt()}s"
-            else -> "${(minutes * 60).toInt()}s"
+            minutes < 1 -> "${(minutes * 60).toInt()}s"
+            else -> {
+                val secs = ((minutes % 1) * 60).toInt()
+                "${minutes.toInt()}m" + if (secs > 0) "${secs}s" else ""
+            }
         }
     }
 
     fun drawTimeAxis(
         canvas: Canvas, paint: Paint, width: Int, height: Int,
-        sampleCount: Int, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float
+        sampleCount: Int, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float,
+        density: Float
     ) {
-        val minutes = sampleCount / 60.0
+        // The source spans (n - 1) samples, not n, so the last sample lands
+        // exactly on the right edge: `size = (list.size() - 1) / 60.0`.
+        val minutes = (sampleCount - 1) / 60.0
         if (minutes <= 0) return
         val columns = 5
         val scaleX = minutes / columns
-        val ratioX = (width - innerPadding * 2) / minutes
+        val ratioX = (width - leftPadding - innerPadding) / minutes
 
         paint.reset()
         paint.isAntiAlias = true
         paint.textSize = textSize
         paint.textAlign = Paint.Align.CENTER
         paint.style = Paint.Style.FILL
+        paint.strokeWidth = 1f
         for (point in 0..columns) {
-            val drawX = (point * scaleX * ratioX).toFloat() + leftPadding
+            // the source truncates the pixel offset before adding the padding:
+            // `((int) (d2 * width)) + f3`
+            val drawX = (point * scaleX * ratioX).toInt() + leftPadding
             paint.color = Color.parseColor("#888888")
-            canvas.drawText(minutesLabel(point * scaleX), drawX, height - innerPadding + textSize + 2f, paint)
+            canvas.drawText(minutesLabel(point * scaleX), drawX, height - innerPadding + textSize + 2f * density, paint)
             paint.color = Color.parseColor("#40888888")
             canvas.drawLine(drawX, paddingTop, drawX, height - innerPadding, paint)
         }
@@ -77,9 +98,10 @@ object SessionChartRenderer {
     fun drawSeries(
         canvas: Canvas, paint: Paint, width: Int, height: Int,
         samples: List<Float>, maxY: Int, keyValues: List<Int>,
-        lineColor: Int, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float
+        lineColor: Int, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float,
+        labelOffset: Float
     ) {
-        if (samples.isEmpty() || maxY <= 0) return
+        if (samples.size < 2 || maxY <= 0) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
         val startY = height - innerPadding
 
@@ -92,12 +114,13 @@ object SessionChartRenderer {
         for (point in 0..maxY) {
             if (point !in keyValues) continue
             paint.color = Color.parseColor("#888888")
-            val labelX = leftPadding - 4f
-            val labelY = paddingTop + (maxY - point) * ratioY + textSize / 2.2f
-            if (point > 0) canvas.drawText(point.toString(), labelX, labelY, paint)
+            // the source truncates before adding paddingTop:
+            // `((int) ((maxY - point) * ratioY)) + paddingTop`
+            val gridY = paddingTop + ((maxY - point) * ratioY).toInt()
+            if (point > 0) canvas.drawText(point.toString(), leftPadding - labelOffset, gridY + textSize / 2.2f, paint)
             paint.strokeWidth = if (point == 0) 4f else 2f
             paint.color = if (point == 0) Color.parseColor("#888888") else Color.parseColor("#aa888888")
-            canvas.drawLine(leftPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
+            canvas.drawLine(leftPadding, gridY, width - innerPadding, gridY, paint)
         }
 
         paint.reset()
@@ -111,7 +134,7 @@ object SessionChartRenderer {
         paint.strokeWidth = 4f
         paint.pathEffect = null
         paint.color = lineColor
-        val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
+        val ratioX = (width - leftPadding - innerPadding) / ((samples.size - 1) / 60f)
         var lastX = leftPadding
         var lastY = startY - samples.first().coerceAtLeast(0f) * ratioY
         for ((index, sample) in samples.withIndex()) {
@@ -122,8 +145,6 @@ object SessionChartRenderer {
             lastX = currentX
             lastY = currentY
         }
-        val endX = (samples.size / 60f) * ratioX + leftPadding
-        canvas.drawLine(lastX, lastY, endX, startY - samples.last().coerceAtLeast(0f) * ratioY, paint)
     }
 
     // Same shape as drawSeries but with an explicit left/right axis choice
@@ -135,9 +156,10 @@ object SessionChartRenderer {
         canvas: Canvas, paint: Paint, width: Int, height: Int,
         samples: List<Float>, maxY: Int, keyValues: List<Int>,
         axisOnRight: Boolean, lineColor: Int, gridColor: Int, zeroLineColor: Int?,
-        leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float
+        leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float,
+        labelOffset: Float
     ) {
-        if (samples.isEmpty() || maxY <= 0) return
+        if (samples.size < 2 || maxY <= 0) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
         val startY = height - innerPadding
 
@@ -154,13 +176,15 @@ object SessionChartRenderer {
             // in the source (FpsDataView, PowerView, BatteryIOView,
             // CpuCyclesView, GpuLoadView).
             paint.color = if (axisOnRight) Color.parseColor("#808080") else Color.parseColor("#888888")
-            val labelX = if (axisOnRight) width - innerPadding + 8f else leftPadding - 4f
-            val labelY = paddingTop + (maxY - point) * ratioY + textSize / 2.2f
-            if (point > 0) canvas.drawText(point.toString(), labelX, labelY, paint)
+            // right-hand labels sit at a flat +8 raw px in the source; left-hand
+            // ones use a per-chart dp offset. Y truncates before paddingTop.
+            val labelX = if (axisOnRight) width - innerPadding + 8f else leftPadding - labelOffset
+            val gridY = paddingTop + ((maxY - point) * ratioY).toInt()
+            if (point > 0) canvas.drawText(point.toString(), labelX, gridY + textSize / 2.2f, paint)
             if (axisOnRight && point == maxY) continue
             paint.strokeWidth = if (point == 0) 4f else 2f
             paint.color = if (point == 0 && zeroLineColor != null) zeroLineColor else gridColor
-            canvas.drawLine(leftPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
+            canvas.drawLine(leftPadding, gridY, width - innerPadding, gridY, paint)
         }
 
         paint.reset()
@@ -174,7 +198,7 @@ object SessionChartRenderer {
         paint.strokeWidth = 4f
         paint.pathEffect = null
         paint.color = lineColor
-        val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
+        val ratioX = (width - leftPadding - innerPadding) / ((samples.size - 1) / 60f)
         var lastX = leftPadding
         var lastY = startY - samples.first().coerceAtLeast(0f) * ratioY
         for ((index, sample) in samples.withIndex()) {
@@ -185,8 +209,6 @@ object SessionChartRenderer {
             lastX = currentX
             lastY = currentY
         }
-        val endX = (samples.size / 60f) * ratioX + leftPadding
-        canvas.drawLine(lastX, lastY, endX, startY - samples.last().coerceAtLeast(0f) * ratioY, paint)
     }
 
     // Several lines sharing one scale (per-core load, per-cluster
@@ -198,12 +220,13 @@ object SessionChartRenderer {
         seriesList: List<List<Float>>, sampleCountForAxis: Int,
         maxY: Int, keyValues: List<Int>,
         colorForSeries: (Int) -> Int, strokeWidthForSeries: (Int) -> Float,
-        leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float
+        leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float,
+        labelOffset: Float
     ) {
-        if (seriesList.isEmpty() || maxY <= 0 || sampleCountForAxis <= 0) return
+        if (seriesList.isEmpty() || maxY <= 0 || sampleCountForAxis < 2) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
         val startY = height - innerPadding
-        val ratioX = (width - innerPadding * 2) / (sampleCountForAxis / 60f)
+        val ratioX = (width - leftPadding - innerPadding) / ((sampleCountForAxis - 1) / 60f)
 
         paint.reset()
         paint.isAntiAlias = true
@@ -214,10 +237,11 @@ object SessionChartRenderer {
         for (point in 0..maxY) {
             if (point !in keyValues) continue
             paint.color = Color.parseColor("#888888")
-            if (point > 0) canvas.drawText(point.toString(), leftPadding - 4f, paddingTop + (maxY - point) * ratioY + textSize / 2.2f, paint)
+            val gridY = paddingTop + ((maxY - point) * ratioY).toInt()
+            if (point > 0) canvas.drawText(point.toString(), leftPadding - labelOffset, gridY + textSize / 2.2f, paint)
             paint.strokeWidth = if (point == 0) 4f else 2f
             paint.color = if (point == 0) Color.parseColor("#888888") else Color.parseColor("#aa888888")
-            canvas.drawLine(leftPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
+            canvas.drawLine(leftPadding, gridY, width - innerPadding, gridY, paint)
         }
 
         paint.reset()
@@ -251,10 +275,10 @@ object SessionChartRenderer {
         color: Int, style: Paint.Style,
         leftPadding: Float, innerPadding: Float, paddingTop: Float
     ) {
-        if (samples.isEmpty() || maxY <= 0) return
+        if (samples.size < 2 || maxY <= 0) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
         val startY = height - innerPadding
-        val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
+        val ratioX = (width - leftPadding - innerPadding) / ((samples.size - 1) / 60f)
 
         paint.reset()
         paint.isAntiAlias = true

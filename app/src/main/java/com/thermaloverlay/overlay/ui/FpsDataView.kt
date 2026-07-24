@@ -64,20 +64,11 @@ class FpsDataView : View {
         return value * context.resources.displayMetrics.density
     }
 
-    private fun minutesLabel(minutes: Double): String {
-        return when {
-            minutes >= 1140 -> "${(minutes / 1140).toInt()}d${((minutes % 1140) / 60).toInt()}h"
-            minutes > 60 -> "${(minutes / 60).toInt()}h${(minutes % 60).toInt()}m"
-            minutes == 0.0 -> "0"
-            minutes >= 1 -> "${minutes.toInt()}m${(minutes % 1 * 60).toInt()}s"
-            else -> "${(minutes * 60).toInt()}s"
-        }
-    }
-
     // x-axis (time) gridlines/labels — same regardless of which right-hand
     // dimension is selected, since it only depends on sample count.
     private fun drawTimeAxis(canvas: Canvas, sampleCount: Int, innerPadding: Float, paddingTop: Float, textSize: Float) {
-        val minutes = sampleCount / 60.0
+        // (n - 1), like every real chart: the last sample lands on the right edge
+        val minutes = (sampleCount - 1) / 60.0
         if (minutes <= 0) return
         val columns = 5
         val scaleX = minutes / columns
@@ -88,10 +79,12 @@ class FpsDataView : View {
         paint.textSize = textSize
         paint.textAlign = Paint.Align.CENTER
         paint.style = Paint.Style.FILL
+        paint.strokeWidth = 1f
         for (point in 0..columns) {
-            val drawX = (point * scaleX * ratioX).toFloat() + innerPadding
+            // the source truncates before adding padding: `((int)(d2 * width)) + f3`
+            val drawX = (point * scaleX * ratioX).toInt() + innerPadding
             paint.color = Color.parseColor("#888888")
-            canvas.drawText(minutesLabel(point * scaleX), drawX, height - innerPadding + textSize + dp2px(2f), paint)
+            canvas.drawText(SessionChartRenderer.minutesLabel(point * scaleX), drawX, height - innerPadding + textSize + dp2px(2f), paint)
             paint.color = Color.parseColor("#40888888")
             canvas.drawLine(drawX, paddingTop, drawX, height - innerPadding, paint)
         }
@@ -114,7 +107,7 @@ class FpsDataView : View {
         paddingTop: Float,
         textSize: Float
     ) {
-        if (samples.isEmpty()) return
+        if (samples.size < 2) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
         val startY = height - innerPadding
 
@@ -155,7 +148,7 @@ class FpsDataView : View {
         }
         paint.pathEffect = null
         paint.color = lineColor
-        val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
+        val ratioX = (width - innerPadding * 2) / ((samples.size - 1) / 60f)
         var lastX = innerPadding
         var lastY = startY - samples.first() * ratioY
         for ((index, sample) in samples.withIndex()) {
@@ -165,11 +158,6 @@ class FpsDataView : View {
             lastX = currentX
             lastY = currentY
         }
-        // One more segment out to the end of the last sample's time slot —
-        // otherwise the line visibly stops one slot-width short of the
-        // right edge.
-        val endX = (samples.size / 60f) * ratioX + innerPadding
-        canvas.drawLine(lastX, lastY, endX, startY - samples.last() * ratioY, paint)
     }
 
     private fun fpsScale(samples: List<Float>): Pair<Int, List<Int>> {

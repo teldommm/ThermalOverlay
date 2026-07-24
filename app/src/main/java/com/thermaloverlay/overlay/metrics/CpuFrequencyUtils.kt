@@ -67,6 +67,16 @@ class CpuFrequencyUtils {
         return getCpuFreqValue(scalingCurFreq.replace("cpu0", cpu))
     }
 
+    /**
+     * Rated maximum frequency of a core, in kHz — what the source reads via
+     * its own CPUUtils.l(core). Used for the cluster colour rule and for the
+     * CPU-cycles chart's scale clamp.
+     */
+    fun getCoreMaxFrequency(core: Int): Int {
+        val path = "/sys/devices/system/cpu/cpu$core/cpufreq/cpuinfo_max_freq"
+        return getCpuFreqValue(path).toIntOrNull() ?: 0
+    }
+
     fun getCoreCurrentFrequency(core: String): String {
         val path = "/sys/devices/system/cpu/cpu$core/cpufreq/scaling_cur_freq"
         return getCpuFreqValue(path)
