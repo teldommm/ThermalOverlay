@@ -23,6 +23,20 @@ import android.graphics.Path
 object SessionChartRenderer {
     private val dashEffect = DashPathEffect(floatArrayOf(4f, 8f), 0f)
 
+    /**
+     * Left padding, sized to the widest y-axis label exactly like the source:
+     * it builds a string of '9' as long as maxY's digit count, measures it and
+     * adds 4dp (FrameTimeView is the one that adds nothing, hence `extraDp`).
+     * The right and bottom padding stay at a flat 18dp.
+     */
+    fun axisLabelPadding(paint: Paint, maxY: Int, textSize: Float, density: Float, extraDp: Float = 4f): Float {
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.textSize = textSize
+        val nines = "9".repeat(maxY.toString().length)
+        return paint.measureText(nines) + extraDp * density
+    }
+
     fun minutesLabel(minutes: Double): String {
         return when {
             minutes >= 1140 -> "${(minutes / 1140).toInt()}d${((minutes % 1140) / 60).toInt()}h"
@@ -35,7 +49,7 @@ object SessionChartRenderer {
 
     fun drawTimeAxis(
         canvas: Canvas, paint: Paint, width: Int, height: Int,
-        sampleCount: Int, innerPadding: Float, paddingTop: Float, textSize: Float
+        sampleCount: Int, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float
     ) {
         val minutes = sampleCount / 60.0
         if (minutes <= 0) return
@@ -49,7 +63,7 @@ object SessionChartRenderer {
         paint.textAlign = Paint.Align.CENTER
         paint.style = Paint.Style.FILL
         for (point in 0..columns) {
-            val drawX = (point * scaleX * ratioX).toFloat() + innerPadding
+            val drawX = (point * scaleX * ratioX).toFloat() + leftPadding
             paint.color = Color.parseColor("#888888")
             canvas.drawText(minutesLabel(point * scaleX), drawX, height - innerPadding + textSize + 2f, paint)
             paint.color = Color.parseColor("#40888888")
@@ -63,7 +77,7 @@ object SessionChartRenderer {
     fun drawSeries(
         canvas: Canvas, paint: Paint, width: Int, height: Int,
         samples: List<Float>, maxY: Int, keyValues: List<Int>,
-        lineColor: Int, innerPadding: Float, paddingTop: Float, textSize: Float
+        lineColor: Int, leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float
     ) {
         if (samples.isEmpty() || maxY <= 0) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
@@ -78,12 +92,12 @@ object SessionChartRenderer {
         for (point in 0..maxY) {
             if (point !in keyValues) continue
             paint.color = Color.parseColor("#888888")
-            val labelX = innerPadding - 4f
+            val labelX = leftPadding - 4f
             val labelY = paddingTop + (maxY - point) * ratioY + textSize / 2.2f
             if (point > 0) canvas.drawText(point.toString(), labelX, labelY, paint)
             paint.strokeWidth = if (point == 0) 4f else 2f
             paint.color = if (point == 0) Color.parseColor("#888888") else Color.parseColor("#aa888888")
-            canvas.drawLine(innerPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
+            canvas.drawLine(leftPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
         }
 
         paint.reset()
@@ -98,17 +112,17 @@ object SessionChartRenderer {
         paint.pathEffect = null
         paint.color = lineColor
         val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
-        var lastX = innerPadding
+        var lastX = leftPadding
         var lastY = startY - samples.first().coerceAtLeast(0f) * ratioY
         for ((index, sample) in samples.withIndex()) {
             val value = sample.coerceAtLeast(0f)
-            val currentX = index / 60f * ratioX + innerPadding
+            val currentX = index / 60f * ratioX + leftPadding
             val currentY = startY - value * ratioY
             canvas.drawLine(lastX, lastY, currentX, currentY, paint)
             lastX = currentX
             lastY = currentY
         }
-        val endX = (samples.size / 60f) * ratioX + innerPadding
+        val endX = (samples.size / 60f) * ratioX + leftPadding
         canvas.drawLine(lastX, lastY, endX, startY - samples.last().coerceAtLeast(0f) * ratioY, paint)
     }
 
@@ -121,7 +135,7 @@ object SessionChartRenderer {
         canvas: Canvas, paint: Paint, width: Int, height: Int,
         samples: List<Float>, maxY: Int, keyValues: List<Int>,
         axisOnRight: Boolean, lineColor: Int, gridColor: Int, zeroLineColor: Int?,
-        innerPadding: Float, paddingTop: Float, textSize: Float
+        leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float
     ) {
         if (samples.isEmpty() || maxY <= 0) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
@@ -140,13 +154,13 @@ object SessionChartRenderer {
             // in the source (FpsDataView, PowerView, BatteryIOView,
             // CpuCyclesView, GpuLoadView).
             paint.color = if (axisOnRight) Color.parseColor("#808080") else Color.parseColor("#888888")
-            val labelX = if (axisOnRight) width - innerPadding + 8f else innerPadding - 4f
+            val labelX = if (axisOnRight) width - innerPadding + 8f else leftPadding - 4f
             val labelY = paddingTop + (maxY - point) * ratioY + textSize / 2.2f
             if (point > 0) canvas.drawText(point.toString(), labelX, labelY, paint)
             if (axisOnRight && point == maxY) continue
             paint.strokeWidth = if (point == 0) 4f else 2f
             paint.color = if (point == 0 && zeroLineColor != null) zeroLineColor else gridColor
-            canvas.drawLine(innerPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
+            canvas.drawLine(leftPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
         }
 
         paint.reset()
@@ -161,17 +175,17 @@ object SessionChartRenderer {
         paint.pathEffect = null
         paint.color = lineColor
         val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
-        var lastX = innerPadding
+        var lastX = leftPadding
         var lastY = startY - samples.first().coerceAtLeast(0f) * ratioY
         for ((index, sample) in samples.withIndex()) {
             val value = sample.coerceAtLeast(0f)
-            val currentX = index / 60f * ratioX + innerPadding
+            val currentX = index / 60f * ratioX + leftPadding
             val currentY = startY - value * ratioY
             canvas.drawLine(lastX, lastY, currentX, currentY, paint)
             lastX = currentX
             lastY = currentY
         }
-        val endX = (samples.size / 60f) * ratioX + innerPadding
+        val endX = (samples.size / 60f) * ratioX + leftPadding
         canvas.drawLine(lastX, lastY, endX, startY - samples.last().coerceAtLeast(0f) * ratioY, paint)
     }
 
@@ -184,7 +198,7 @@ object SessionChartRenderer {
         seriesList: List<List<Float>>, sampleCountForAxis: Int,
         maxY: Int, keyValues: List<Int>,
         colorForSeries: (Int) -> Int, strokeWidthForSeries: (Int) -> Float,
-        innerPadding: Float, paddingTop: Float, textSize: Float
+        leftPadding: Float, innerPadding: Float, paddingTop: Float, textSize: Float
     ) {
         if (seriesList.isEmpty() || maxY <= 0 || sampleCountForAxis <= 0) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
@@ -200,10 +214,10 @@ object SessionChartRenderer {
         for (point in 0..maxY) {
             if (point !in keyValues) continue
             paint.color = Color.parseColor("#888888")
-            if (point > 0) canvas.drawText(point.toString(), innerPadding - 4f, paddingTop + (maxY - point) * ratioY + textSize / 2.2f, paint)
+            if (point > 0) canvas.drawText(point.toString(), leftPadding - 4f, paddingTop + (maxY - point) * ratioY + textSize / 2.2f, paint)
             paint.strokeWidth = if (point == 0) 4f else 2f
             paint.color = if (point == 0) Color.parseColor("#888888") else Color.parseColor("#aa888888")
-            canvas.drawLine(innerPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
+            canvas.drawLine(leftPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
         }
 
         paint.reset()
@@ -214,11 +228,11 @@ object SessionChartRenderer {
             if (series.isEmpty()) continue
             paint.color = colorForSeries(seriesIndex)
             paint.strokeWidth = strokeWidthForSeries(seriesIndex)
-            var lastX = innerPadding
+            var lastX = leftPadding
             var lastY = startY - series.first().coerceIn(0f, maxY.toFloat()) * ratioY
             for ((index, sample) in series.withIndex()) {
                 val value = sample.coerceIn(0f, maxY.toFloat())
-                val currentX = index / 60f * ratioX + innerPadding
+                val currentX = index / 60f * ratioX + leftPadding
                 val currentY = startY - value * ratioY
                 canvas.drawLine(lastX, lastY, currentX, currentY, paint)
                 lastX = currentX
@@ -235,7 +249,7 @@ object SessionChartRenderer {
         canvas: Canvas, paint: Paint, width: Int, height: Int,
         samples: List<Float>, maxY: Int,
         color: Int, style: Paint.Style,
-        innerPadding: Float, paddingTop: Float
+        leftPadding: Float, innerPadding: Float, paddingTop: Float
     ) {
         if (samples.isEmpty() || maxY <= 0) return
         val ratioY = (height - innerPadding - paddingTop) / maxY
@@ -249,11 +263,11 @@ object SessionChartRenderer {
         paint.strokeWidth = 2f
 
         val path = Path()
-        path.moveTo(innerPadding, startY)
+        path.moveTo(leftPadding, startY)
         for ((index, sample) in samples.withIndex()) {
             val value = sample.coerceIn(0f, maxY.toFloat())
-            val leftX = (if (index > 0) (index - 1) / 60f * ratioX else 0f) + innerPadding
-            val rightX = index / 60f * ratioX + innerPadding
+            val leftX = (if (index > 0) (index - 1) / 60f * ratioX else 0f) + leftPadding
+            val rightX = index / 60f * ratioX + leftPadding
             val topY = startY - value * ratioY
             path.lineTo(leftX, startY)
             path.lineTo(leftX, topY)

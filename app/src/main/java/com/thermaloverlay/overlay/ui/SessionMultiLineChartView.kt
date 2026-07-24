@@ -9,9 +9,7 @@
  *
  * Not ported here: the optional "total/average" overlay line CpuLoadsView
  * can draw, off by the source's own default and not worth the added
- * complexity. CpuFrequencyStat (a time-at-frequency histogram, a
- * different visualization from this line chart) is ported separately as
- * CpuFrequencyStatView.
+ * complexity.
  *
  * CPU_CORE_CYCLES is also dual-series in the source (confirmed by
  * counting distinct storage-read calls in CpuCyclesView): CPU temperature
@@ -87,6 +85,7 @@ class SessionMultiLineChartView : View {
         if (sessionId < 1) return
 
         val innerPadding = dp2px(18f)
+        val density = context.resources.displayMetrics.density
         val paddingTop = dp2px(4f)
         val textSize = dp2px(8.5f)
 
@@ -96,13 +95,15 @@ class SessionMultiLineChartView : View {
                 if (series.isEmpty()) return
                 val sampleCount = series.maxOf { it.size }
                 val clusterOf = coreToClusterIndex(series.size)
-                SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, innerPadding, paddingTop, textSize)
+                // real CpuLoadsView uses a flat 18dp — its labels never exceed 3 digits
+                val leftPadding = innerPadding
+                SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, leftPadding, innerPadding, paddingTop, textSize)
                 SessionChartRenderer.drawMultiSeries(
                     canvas, paint, width, height, series, sampleCount,
                     maxY = 100, keyValues = (0..100 step 10).toList(),
                     colorForSeries = { i -> val c = clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0); clusterColors[c % clusterColors.size] },
                     strokeWidthForSeries = { i -> (clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0) + 1).toFloat() },
-                    innerPadding, paddingTop, textSize
+                    leftPadding, innerPadding, paddingTop, textSize
                 )
             }
             Kind.CPU_CLUSTER_FREQ -> {
@@ -116,13 +117,14 @@ class SessionMultiLineChartView : View {
                     maxY > 3300 -> (0..4400 step 400).toList()
                     else -> (0..3300 step 300).toList()
                 }
-                SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, innerPadding, paddingTop, textSize)
+                val leftPadding = SessionChartRenderer.axisLabelPadding(paint, maxY, textSize, density)
+                SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, leftPadding, innerPadding, paddingTop, textSize)
                 SessionChartRenderer.drawMultiSeries(
                     canvas, paint, width, height, series, sampleCount,
                     maxY = maxY, keyValues = keys,
                     colorForSeries = { i -> clusterColors[i % clusterColors.size] },
                     strokeWidthForSeries = { i -> (i + 1).toFloat() },
-                    innerPadding, paddingTop, textSize
+                    leftPadding, innerPadding, paddingTop, textSize
                 )
             }
             // Per-core like loads, but cycles are a MHz-ish reading so they
@@ -143,13 +145,14 @@ class SessionMultiLineChartView : View {
                     maxY > 3300 -> (0..4400 step 400).toList()
                     else -> (0..3300 step 300).toList()
                 }
-                SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, innerPadding, paddingTop, textSize)
+                val leftPadding = SessionChartRenderer.axisLabelPadding(paint, maxY, textSize, density)
+                SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, leftPadding, innerPadding, paddingTop, textSize)
                 SessionChartRenderer.drawMultiSeries(
                     canvas, paint, width, height, series, sampleCount,
                     maxY = maxY, keyValues = keys,
                     colorForSeries = { i -> val c = clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0); clusterColors[c % clusterColors.size] },
                     strokeWidthForSeries = { i -> (clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0) + 1).toFloat() },
-                    innerPadding, paddingTop, textSize
+                    leftPadding, innerPadding, paddingTop, textSize
                 )
                 // Confirmed dual-series in the source (py0.C(), the same
                 // CPU-temperature scale CpuTemperatureView itself uses) —
@@ -168,7 +171,7 @@ class SessionMultiLineChartView : View {
                     SessionChartRenderer.drawDualAxisSeries(
                         canvas, paint, width, height, tempSamples, tempMaxY, (0..tempMaxY step 10).toList(), axisOnRight = true,
                         lineColor = Color.parseColor("#87d3ff"), gridColor = Color.parseColor("#4087d3ff"),
-                        zeroLineColor = null, innerPadding, paddingTop, textSize
+                        zeroLineColor = null, leftPadding, innerPadding, paddingTop, textSize
                     )
                 }
             }

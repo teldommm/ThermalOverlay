@@ -70,15 +70,12 @@
     <string name="fps_chart_temp_label">Temperature</string>
     <string name="fps_chart_section_cpu_temp">CPU temperature</string>
     <string name="fps_chart_section_ddr">DDR frequency</string>
-    <string name="fps_chart_section_current">Battery current</string>
     <string name="fps_chart_section_power">Power</string>
     <string name="fps_chart_section_gpu_load">GPU load</string>
     <string name="fps_chart_section_core_loads">Per-core CPU load</string>
     <string name="fps_chart_section_cluster_freq">Per-cluster CPU frequency</string>
     <string name="fps_chart_section_core_cycles">Per-core CPU cycles</string>
-    <string name="fps_chart_section_freq_stat">Time at frequency</string>
     <string name="fps_chart_section_frame_time">Frame time</string>
-    <string name="fps_chart_section_jank">Jank / big jank</string>
 
     <string name="notification_channel_name">ThermalOverlay HUD</string>
     <string name="notification_title">Performance overlay is active</string>

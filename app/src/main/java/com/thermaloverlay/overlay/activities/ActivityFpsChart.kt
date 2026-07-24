@@ -41,7 +41,6 @@ import com.thermaloverlay.overlay.R
 import com.thermaloverlay.overlay.model.FpsWatchSession
 import com.thermaloverlay.overlay.store.FpsWatchStore
 import com.thermaloverlay.overlay.ui.AdapterSessions
-import com.thermaloverlay.overlay.ui.CpuFrequencyStatView
 import com.thermaloverlay.overlay.ui.FloatFpsWatch
 import com.thermaloverlay.overlay.ui.FpsDataView
 import com.thermaloverlay.overlay.ui.SessionLineChartView
@@ -70,15 +69,12 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
     private lateinit var chartView: FpsDataView
     private lateinit var cpuTempView: SessionLineChartView
     private lateinit var ddrView: SessionLineChartView
-    private lateinit var currentView: SessionLineChartView
     private lateinit var powerView: SessionLineChartView
     private lateinit var gpuLoadView: SessionLineChartView
     private lateinit var coreLoadsView: SessionMultiLineChartView
     private lateinit var clusterFreqView: SessionMultiLineChartView
     private lateinit var coreCyclesView: SessionMultiLineChartView
-    private lateinit var freqStatView: CpuFrequencyStatView
     private lateinit var frameTimeView: SessionJankChartView
-    private lateinit var jankView: SessionJankChartView
 
     private var adapter: AdapterSessions? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -106,15 +102,12 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         chartView = findViewById(R.id.chart_session_view)
         cpuTempView = findViewById<SessionLineChartView>(R.id.chart_cpu_temp_view).apply { kind = SessionLineChartView.Kind.CPU_TEMPERATURE }
         ddrView = findViewById<SessionLineChartView>(R.id.chart_ddr_view).apply { kind = SessionLineChartView.Kind.DDR_FREQUENCY }
-        currentView = findViewById<SessionLineChartView>(R.id.chart_current_view).apply { kind = SessionLineChartView.Kind.BATTERY_CURRENT }
         powerView = findViewById<SessionLineChartView>(R.id.chart_power_view).apply { kind = SessionLineChartView.Kind.POWER }
         gpuLoadView = findViewById<SessionLineChartView>(R.id.chart_gpu_load_view).apply { kind = SessionLineChartView.Kind.GPU_LOAD }
         coreLoadsView = findViewById<SessionMultiLineChartView>(R.id.chart_core_loads_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_LOADS }
         clusterFreqView = findViewById<SessionMultiLineChartView>(R.id.chart_cluster_freq_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CLUSTER_FREQ }
         coreCyclesView = findViewById<SessionMultiLineChartView>(R.id.chart_core_cycles_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_CYCLES }
-        freqStatView = findViewById(R.id.chart_freq_stat_view)
-        frameTimeView = findViewById<SessionJankChartView>(R.id.chart_frame_time_view).apply { kind = SessionJankChartView.Kind.FRAME_TIME }
-        jankView = findViewById<SessionJankChartView>(R.id.chart_jank_view).apply { kind = SessionJankChartView.Kind.JANK }
+        frameTimeView = findViewById(R.id.chart_frame_time_view)
 
         sessionsList.layoutManager = LinearLayoutManager(this)
 
@@ -316,14 +309,11 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         chartView.setSessionId(sessionId)
         cpuTempView.setSessionId(sessionId)
         ddrView.setSessionId(sessionId)
-        currentView.setSessionId(sessionId)
         powerView.setSessionId(sessionId)
         gpuLoadView.setSessionId(sessionId)
         coreLoadsView.setSessionId(sessionId)
         clusterFreqView.setSessionId(sessionId)
         coreCyclesView.setSessionId(sessionId)
-        freqStatView.setSessionId(sessionId)
         frameTimeView.setSessionId(sessionId)
-        jankView.setSessionId(sessionId)
     }
 }

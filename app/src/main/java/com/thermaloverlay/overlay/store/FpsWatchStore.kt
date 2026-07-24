@@ -206,8 +206,6 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
     fun sessionDdrFreqData(sessionId: Long) = floatColumn("ddr_freq", sessionId)
     fun sessionCurrentData(sessionId: Long) = floatColumn("current_ma", sessionId)
     fun sessionVoltageData(sessionId: Long) = floatColumn("voltage", sessionId)
-    fun sessionJankData(sessionId: Long) = floatColumn("jank_count", sessionId)
-    fun sessionBigJankData(sessionId: Long) = floatColumn("big_jank_count", sessionId)
     fun sessionFrameTimeData(sessionId: Long) = floatColumn("frame_time", sessionId)
     fun sessionGpuFreqData(sessionId: Long) = floatColumn("gpu_freq", sessionId)
 

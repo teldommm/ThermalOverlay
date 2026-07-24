@@ -237,19 +237,6 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/fps_chart_section_current"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="4dp" />
-            <com.thermaloverlay.overlay.ui.SessionLineChartView
-                android:id="@+id/chart_current_view"
-                android:layout_width="match_parent"
-                android:layout_height="140dp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
                 android:text="@string/fps_chart_section_power"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
@@ -315,19 +302,6 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/fps_chart_section_freq_stat"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="4dp" />
-            <com.thermaloverlay.overlay.ui.CpuFrequencyStatView
-                android:id="@+id/chart_freq_stat_view"
-                android:layout_width="match_parent"
-                android:layout_height="140dp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
                 android:text="@string/fps_chart_section_frame_time"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
@@ -335,19 +309,6 @@
                 android:layout_marginBottom="4dp" />
             <com.thermaloverlay.overlay.ui.SessionJankChartView
                 android:id="@+id/chart_frame_time_view"
-                android:layout_width="match_parent"
-                android:layout_height="140dp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/fps_chart_section_jank"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="4dp" />
-            <com.thermaloverlay.overlay.ui.SessionJankChartView
-                android:id="@+id/chart_jank_view"
                 android:layout_width="match_parent"
                 android:layout_height="140dp" />
         </LinearLayout>
