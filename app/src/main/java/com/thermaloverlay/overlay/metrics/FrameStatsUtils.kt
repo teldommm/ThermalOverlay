@@ -81,7 +81,7 @@ class FrameStatsUtils {
             lastFrameNs[packageName] = newestVsync ?: 0L
             return null
         }
-        var newestSeen: Long = lastSeen
+        var newestSeen = lastSeen
         val durationsMs = ArrayList<Double>()
 
         for (lineIndex in (blockStarts[0] + 2) until blockStarts[1]) {

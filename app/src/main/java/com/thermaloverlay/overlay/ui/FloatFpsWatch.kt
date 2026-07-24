@@ -317,6 +317,7 @@ class FloatFpsWatch(private val mContext: Context) {
                 ?.takeIf { it > -20000 && it < 20000 }
 
             val frameStats = sessionApp?.let { frameStatsUtils.poll(mContext, it) }
+            val gpuFreq = GpuUtils.getGpuFreq().toIntOrNull()
 
             fpsWatchStore.addHistory(
                 sessionId,
@@ -334,7 +335,8 @@ class FloatFpsWatch(private val mContext: Context) {
                 coreCycles = coreCycles,
                 jankCount = frameStats?.jankCount,
                 bigJankCount = frameStats?.bigJankCount,
-                frameTimeMs = frameStats?.maxFrameTimeMs
+                frameTimeMs = frameStats?.maxFrameTimeMs,
+                gpuFreq = gpuFreq
             )
 
             tickCount++

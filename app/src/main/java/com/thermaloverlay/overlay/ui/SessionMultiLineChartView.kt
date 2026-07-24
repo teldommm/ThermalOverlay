@@ -12,6 +12,12 @@
  * complexity. CpuFrequencyStat (a time-at-frequency histogram, a
  * different visualization from this line chart) is ported separately as
  * CpuFrequencyStatView.
+ *
+ * CPU_CORE_CYCLES is also dual-series in the source (confirmed by
+ * counting distinct storage-read calls in CpuCyclesView): CPU temperature
+ * (right axis, same scale/keys as CpuTemperatureView) alongside the
+ * per-core cycles. CPU_CORE_LOADS and CPU_CLUSTER_FREQ were checked the
+ * same way and are genuinely single-series.
  */
 package com.thermaloverlay.overlay.ui
 
@@ -95,7 +101,7 @@ class SessionMultiLineChartView : View {
                     canvas, paint, width, height, series, sampleCount,
                     maxY = 100, keyValues = (0..100 step 10).toList(),
                     colorForSeries = { i -> val c = clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0); clusterColors[c % clusterColors.size] },
-                    strokeWidthForSeries = { i -> dp2px((clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0) + 1).toFloat()) },
+                    strokeWidthForSeries = { i -> (clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0) + 1).toFloat() },
                     innerPadding, paddingTop, textSize
                 )
             }
@@ -115,7 +121,7 @@ class SessionMultiLineChartView : View {
                     canvas, paint, width, height, series, sampleCount,
                     maxY = maxY, keyValues = keys,
                     colorForSeries = { i -> clusterColors[i % clusterColors.size] },
-                    strokeWidthForSeries = { i -> dp2px((i + 1).toFloat()) },
+                    strokeWidthForSeries = { i -> (i + 1).toFloat() },
                     innerPadding, paddingTop, textSize
                 )
             }
@@ -142,9 +148,29 @@ class SessionMultiLineChartView : View {
                     canvas, paint, width, height, series, sampleCount,
                     maxY = maxY, keyValues = keys,
                     colorForSeries = { i -> val c = clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0); clusterColors[c % clusterColors.size] },
-                    strokeWidthForSeries = { i -> dp2px((clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0) + 1).toFloat()) },
+                    strokeWidthForSeries = { i -> (clusterOf.getOrElse(i) { 0 }.coerceAtLeast(0) + 1).toFloat() },
                     innerPadding, paddingTop, textSize
                 )
+                // Confirmed dual-series in the source (py0.C(), the same
+                // CPU-temperature scale CpuTemperatureView itself uses) —
+                // drawn as a plain single right-axis line alongside the
+                // per-core cycles.
+                val tempSamples = store.sessionCpuTempData(sessionId)
+                if (tempSamples.isNotEmpty()) {
+                    val tempMaxValue = tempSamples.maxOrNull() ?: 0f
+                    val tempMaxY = when {
+                        tempMaxValue > 130 -> 150
+                        tempMaxValue > 120 -> 130
+                        tempMaxValue > 110 -> 120
+                        tempMaxValue > 100 -> 110
+                        else -> 100
+                    }
+                    SessionChartRenderer.drawDualAxisSeries(
+                        canvas, paint, width, height, tempSamples, tempMaxY, (0..tempMaxY step 10).toList(), axisOnRight = true,
+                        lineColor = Color.parseColor("#87d3ff"), gridColor = Color.parseColor("#4087d3ff"),
+                        zeroLineColor = null, innerPadding, paddingTop, textSize
+                    )
+                }
             }
         }
     }

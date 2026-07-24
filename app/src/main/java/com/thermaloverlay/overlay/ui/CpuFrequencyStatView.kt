@@ -104,14 +104,14 @@ class CpuFrequencyStatView : View {
         paint.reset()
         paint.isAntiAlias = true
         paint.style = Paint.Style.FILL
-        paint.strokeWidth = dp2px(5f)
+        paint.strokeWidth = 5f
         val clusterCount = series.size
         for ((clusterIndex, clusterSeries) in series.withIndex()) {
             if (clusterSeries.isEmpty()) continue
             paint.color = clusterColors[clusterIndex % clusterColors.size]
             val histogram = clusterSeries.groupingBy { it.toInt() }.eachCount()
             val total = clusterSeries.size
-            val xOffset = (clusterIndex * 2 - clusterCount) * dp2px(5f)
+            val xOffset = (clusterIndex * 2 - clusterCount) * 5f
             for ((freq, count) in histogram) {
                 val percent = (count * 100f / total).coerceAtLeast(1f)
                 val x = innerPadding + freq * ratioX + xOffset

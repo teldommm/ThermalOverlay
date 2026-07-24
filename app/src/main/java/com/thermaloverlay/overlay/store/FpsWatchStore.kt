@@ -13,7 +13,7 @@ import com.thermaloverlay.overlay.model.FpsWatchSession
 
 class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log", null, DB_VERSION) {
     companion object {
-        private const val DB_VERSION = 3
+        private const val DB_VERSION = 4
 
         // Columns added in v2, applied both to fresh installs (onCreate)
         // and existing DBs (onUpgrade) from the same list, so the two paths
@@ -34,6 +34,12 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
             "jank_count INTEGER",
             "big_jank_count INTEGER",
             "frame_time REAL"
+        )
+
+        // v4: GPU frequency (GpuLoadView is actually a dual-series chart
+        // in the source — load% and frequency together).
+        private val V4_COLUMNS = listOf(
+            "gpu_freq INTEGER"
         )
     }
 
@@ -61,6 +67,7 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
             )
             V2_COLUMNS.forEach { db.execSQL("alter table fps_history add column $it") }
             V3_COLUMNS.forEach { db.execSQL("alter table fps_history add column $it") }
+            V4_COLUMNS.forEach { db.execSQL("alter table fps_history add column $it") }
         } catch (ex: Exception) {
         }
     }
@@ -78,6 +85,14 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
         }
         if (oldVersion < 3) {
             V3_COLUMNS.forEach {
+                try {
+                    db.execSQL("alter table fps_history add column $it")
+                } catch (ex: Exception) {
+                }
+            }
+        }
+        if (oldVersion < 4) {
+            V4_COLUMNS.forEach {
                 try {
                     db.execSQL("alter table fps_history add column $it")
                 } catch (ex: Exception) {
@@ -117,7 +132,8 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
         coreCycles: List<Int>? = null,
         jankCount: Int? = null,
         bigJankCount: Int? = null,
-        frameTimeMs: Double? = null
+        frameTimeMs: Double? = null,
+        gpuFreq: Int? = null
     ): Boolean {
         return try {
             val values = ContentValues().apply {
@@ -138,6 +154,7 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
                 jankCount?.let { put("jank_count", it) }
                 bigJankCount?.let { put("big_jank_count", it) }
                 frameTimeMs?.let { put("frame_time", it) }
+                gpuFreq?.let { put("gpu_freq", it) }
             }
             writableDatabase.insert("fps_history", null, values) >= 0
         } catch (ex: Exception) {
@@ -192,6 +209,7 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
     fun sessionJankData(sessionId: Long) = floatColumn("jank_count", sessionId)
     fun sessionBigJankData(sessionId: Long) = floatColumn("big_jank_count", sessionId)
     fun sessionFrameTimeData(sessionId: Long) = floatColumn("frame_time", sessionId)
+    fun sessionGpuFreqData(sessionId: Long) = floatColumn("gpu_freq", sessionId)
 
     // Raw rows for a CSV-per-tick column: one entry per tick, each the
     // comma-split values for that tick (core loads, cluster freqs, ...).

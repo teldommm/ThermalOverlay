@@ -142,7 +142,15 @@ class FpsDataView : View {
         paint.reset()
         paint.isAntiAlias = true
         paint.style = Paint.Style.FILL
-        paint.strokeWidth = 8f
+        // Adaptive thickness (thinner for longer sessions, so the line
+        // doesn't turn into a solid block) applies only to the primary/FPS
+        // line; every right-axis dimension uses a fixed 4f regardless of
+        // session length.
+        paint.strokeWidth = if (axisOnRight) 4f else when {
+            samples.size >= 1800 -> 2f
+            samples.size >= 900 -> 4f
+            else -> 8f
+        }
         paint.pathEffect = null
         paint.color = lineColor
         val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
@@ -166,25 +174,23 @@ class FpsDataView : View {
         val maxValue = samples.maxOrNull()!!
         val maxValueInt = maxValue.toInt() + (if (maxValue % 1 == 0f) 1 else 0)
         return when {
-            maxValueInt > 160 -> maxValueInt to listOf(0, 30, 60, 90, 120, maxValueInt)
-            maxValueInt > 144 -> 160 to listOf(0, 30, 60, 90, 120, 160)
-            maxValueInt > 120 -> 144 to listOf(0, 30, 60, 90, 120, 144)
-            maxValueInt > 90 -> 120 to listOf(0, 30, 60, 90, 120)
-            maxValueInt > 60 -> 90 to listOf(0, 30, 60, 90)
-            else -> 60 to listOf(0, 20, 40, 60)
+            maxValueInt > 167 -> maxValueInt to listOf(0, 30, 60, 90, 120, 144, maxValueInt)
+            maxValueInt > 146 -> 165 to listOf(0, 30, 60, 90, 120, 165)
+            maxValueInt > 122 -> 144 to listOf(0, 30, 60, 90, 120, 144)
+            maxValueInt > 92 -> 120 to listOf(0, 30, 60, 90, 120)
+            maxValueInt > 62 -> 90 to listOf(0, 30, 60, 90)
+            else -> 60 to listOf(0, 15, 30, 45, 60)
         }
     }
 
     private fun temperatureScale(samples: List<Float>): Pair<Int, List<Int>> {
         val maxValue = samples.maxOrNull()!!
         val maxValueInt = maxValue.toInt() + (if (maxValue % 1 == 0f) 1 else 0)
-        val maxY = when {
-            maxValueInt > 60 -> maxValueInt
-            maxValueInt > 50 -> 55
-            maxValueInt > 45 -> 50
-            else -> 45
-        }
-        return maxY to listOf(35, 40, 45, 50, 55, 60)
+        // Only capped/bucketed below 60 (into 50 or 60); above that the
+        // source uses the raw max uncapped, unlike the four-tier cascade
+        // this used to have.
+        val maxY = if (maxValueInt > 60) maxValueInt else if (maxValueInt > 55) 60 else 50
+        return maxY to listOf(30, 35, 40, 45, 50, 55, 60, 65)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -222,7 +228,7 @@ class FpsDataView : View {
                 val samples = store.sessionCapacityData(sessionId)
                 if (samples.isNotEmpty()) {
                     drawSeries(
-                        canvas, samples, 100, listOf(50, 75, 90, 100), axisOnRight = true,
+                        canvas, samples, 100, listOf(25, 50, 75, 90, 100), axisOnRight = true,
                         lineColor = Color.parseColor("#8087d3ff"), gridColor = Color.parseColor("#4087d3ff"),
                         zeroLineColor = null, innerPadding, paddingTop, textSize
                     )
@@ -232,8 +238,14 @@ class FpsDataView : View {
                 val cpuSamples = store.sessionCpuLoadData(sessionId)
                 val gpuSamples = store.sessionGpuLoadData(sessionId)
                 if (cpuSamples.isNotEmpty() && gpuSamples.isNotEmpty()) {
+                    // Source's key set here technically varies with which
+                    // FPS-axis tier is active (sparser {25,50,75,100} in a
+                    // couple of edge-case tiers, to avoid overcrowding
+                    // alongside the FPS gridlines) — {20,40,60,80,100} is
+                    // its default/common case, used here throughout rather
+                    // than threading that cross-axis dependency through.
                     drawSeries(
-                        canvas, cpuSamples, 100, listOf(50, 75, 90, 100), axisOnRight = true,
+                        canvas, cpuSamples, 100, listOf(20, 40, 60, 80, 100), axisOnRight = true,
                         lineColor = Color.parseColor("#80fc6bc5"), gridColor = Color.parseColor("#4087d3ff"),
                         zeroLineColor = null, innerPadding, paddingTop, textSize
                     )

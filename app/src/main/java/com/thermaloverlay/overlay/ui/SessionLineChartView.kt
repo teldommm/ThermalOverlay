@@ -8,12 +8,23 @@
  * for its four dimensions, so it's collapsed the same way here via Kind
  * instead of five copies of the same ~150-line class.
  *
+ * GPU_LOAD, POWER, and BATTERY_CURRENT are the exceptions: the real
+ * GpuLoadView/PowerView/BatteryIOView are each actually dual-axis charts
+ * like FpsDataView, not single series. GPU_LOAD pairs GPU frequency (left)
+ * with GPU load% (right); POWER and BATTERY_CURRENT each pair their own
+ * metric (left) with CPU load% (right, shared secondary — same data,
+ * color, and scale in both). CpuTemperatureView and DDRView were checked
+ * the same way (counting distinct storage-read calls in each real class)
+ * and are confirmed genuinely single-series.
+ *
  * Scale/gridline rules per kind are ported from the real per-class logic
  * (each has its own tiered maxY + key-gridline-value table); DDR is the one
- * exception — the source snaps its gridlines to the actual distinct
- * frequency steps observed in the session's samples (since DDR only run at
- * a handful of fixed hardware frequencies) rather than a fixed numeric
- * tier table, which is what sortedDistinct below reproduces.
+ * exception among the single-series kinds — the source snaps its
+ * gridlines to the actual distinct frequency steps observed in the
+ * session's samples (since DDR only run at a handful of fixed hardware
+ * frequencies) rather than a fixed numeric tier table, with a hardcoded
+ * 4266 (MHz) floor independent of the data and 0 always included as a
+ * gridline — both reproduced below.
  */
 package com.thermaloverlay.overlay.ui
 
@@ -98,8 +109,13 @@ class SessionLineChartView : View {
                 maxY to (0..maxY step 10).toList()
             }
             Kind.DDR_FREQUENCY -> {
-                val distinct = samples.map { it.toInt() }.filter { it >= 0 }.distinct().sorted()
-                val maxY = distinct.maxOrNull() ?: 0
+                // Source hardcodes a 4266 (MHz) floor for the scale,
+                // independent of what's actually observed — without it a
+                // session that stayed at low DDR frequencies throughout
+                // would zoom in artificially instead of using the same
+                // baseline scale the real app always shows.
+                val distinct = (samples.map { it.toInt() }.filter { it >= 0 } + 0).distinct().sorted()
+                val maxY = maxOf(distinct.maxOrNull() ?: 0, 4266)
                 maxY to distinct
             }
             Kind.POWER -> tieredScale(
@@ -135,19 +151,80 @@ class SessionLineChartView : View {
         }
     }
 
+    // GPU frequency's own scale: floor 600 (MHz), rounded up to the next
+    // 100 above that, then one of three fixed gridline sets depending on
+    // the tier — matches the real GpuLoadView.f(). The exact 1600/1200
+    // tier boundaries come from a section of the decompiled source jadx
+    // flagged as having reconstructed duplicated/uncertain control flow,
+    // so this is our best-evidence read of it rather than a byte-exact
+    // transcription.
+    private fun gpuFreqScale(samples: List<Float>): Pair<Int, List<Int>> {
+        val rawMax = (samples.maxOrNull() ?: 0f).toInt()
+        val maxY = if (rawMax <= 600) 600 else ((rawMax / 100) * 100) + (if (rawMax % 100 > 0) 100 else 0)
+        val keys = when {
+            maxY > 1600 -> (0..2000 step 200).toList()
+            maxY > 1200 -> (0..1500 step 150).toList()
+            else -> (0..1100 step 100).toList()
+        }
+        return maxY to keys
+    }
+
+    // CPU load as the shared secondary/right-axis series in the two other
+    // dual-series kinds (Power, Battery current) — same data, color, and
+    // scale in both, so factored out here instead of duplicated.
+    private fun drawCpuLoadSecondary(canvas: Canvas, width: Int, height: Int, innerPadding: Float, paddingTop: Float, textSize: Float) {
+        val cpuLoadSamples = store.sessionCpuLoadData(sessionId)
+        if (cpuLoadSamples.isEmpty()) return
+        SessionChartRenderer.drawDualAxisSeries(
+            canvas, paint, width, height, cpuLoadSamples, 100, listOf(20, 40, 60, 80, 100), axisOnRight = true,
+            lineColor = Color.parseColor("#87d3ff"), gridColor = Color.parseColor("#4087d3ff"),
+            zeroLineColor = null, innerPadding, paddingTop, textSize
+        )
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (sessionId < 1) return
-
-        val samples = samplesFor(kind)
-        if (samples.isEmpty()) return
 
         val innerPadding = dp2px(18f)
         val paddingTop = dp2px(4f)
         val textSize = dp2px(8.5f)
 
+        if (kind == Kind.GPU_LOAD) {
+            val loadSamples = store.sessionGpuLoadData(sessionId)
+            val freqSamples = store.sessionGpuFreqData(sessionId)
+            if (loadSamples.isEmpty() || freqSamples.isEmpty()) return
+
+            SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, freqSamples.size, innerPadding, paddingTop, textSize)
+            val (freqMaxY, freqKeys) = gpuFreqScale(freqSamples)
+            SessionChartRenderer.drawDualAxisSeries(
+                canvas, paint, width, height, freqSamples, freqMaxY, freqKeys, axisOnRight = false,
+                lineColor = Color.parseColor("#87d3ff"), gridColor = Color.parseColor("#aa888888"),
+                zeroLineColor = Color.parseColor("#888888"), innerPadding, paddingTop, textSize
+            )
+            SessionChartRenderer.drawDualAxisSeries(
+                canvas, paint, width, height, loadSamples, 100, listOf(50, 75, 90, 100), axisOnRight = true,
+                lineColor = Color.parseColor("#1474e4"), gridColor = Color.parseColor("#4087d3ff"),
+                zeroLineColor = null, innerPadding, paddingTop, textSize
+            )
+            return
+        }
+
+        val samples = samplesFor(kind)
+        if (samples.isEmpty()) return
+
         SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, samples.size, innerPadding, paddingTop, textSize)
         val (maxY, keys) = scaleFor(kind, samples)
-        SessionChartRenderer.drawSeries(canvas, paint, width, height, samples, maxY, keys, lineColor(kind), innerPadding, paddingTop, textSize)
+        // Power and battery current are also dual-series in the source —
+        // CPU load% drawn alongside on the right axis — unlike
+        // CpuTemperatureView/DDRView, confirmed genuinely single-series.
+        SessionChartRenderer.drawDualAxisSeries(
+            canvas, paint, width, height, samples, maxY, keys, axisOnRight = false,
+            lineColor = lineColor(kind), gridColor = Color.parseColor("#aa888888"),
+            zeroLineColor = Color.parseColor("#888888"), innerPadding, paddingTop, textSize
+        )
+        if (kind == Kind.POWER || kind == Kind.BATTERY_CURRENT) {
+            drawCpuLoadSecondary(canvas, width, height, innerPadding, paddingTop, textSize)
+        }
     }
 }

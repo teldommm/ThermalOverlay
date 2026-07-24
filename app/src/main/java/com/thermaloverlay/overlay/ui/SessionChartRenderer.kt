@@ -107,6 +107,60 @@ object SessionChartRenderer {
         canvas.drawLine(lastX, lastY, endX, startY - samples.last().coerceAtLeast(0f) * ratioY, paint)
     }
 
+    // Same shape as drawSeries but with an explicit left/right axis choice
+    // and an optional zero-line override color — needed for GPU load,
+    // which (like FpsDataView's own FPS+dimension pairing) is actually a
+    // dual-axis chart in the source: frequency on the left, load% on the
+    // right, sharing one time axis.
+    fun drawDualAxisSeries(
+        canvas: Canvas, paint: Paint, width: Int, height: Int,
+        samples: List<Float>, maxY: Int, keyValues: List<Int>,
+        axisOnRight: Boolean, lineColor: Int, gridColor: Int, zeroLineColor: Int?,
+        innerPadding: Float, paddingTop: Float, textSize: Float
+    ) {
+        if (samples.isEmpty() || maxY <= 0) return
+        val ratioY = (height - innerPadding - paddingTop) / maxY
+        val startY = height - innerPadding
+
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.textSize = textSize
+        paint.strokeWidth = 2f
+        paint.pathEffect = dashEffect
+        paint.textAlign = if (axisOnRight) Paint.Align.LEFT else Paint.Align.RIGHT
+        for (point in 0..maxY) {
+            if (point !in keyValues) continue
+            paint.color = Color.parseColor("#888888")
+            val labelX = if (axisOnRight) width - innerPadding + 8f else innerPadding - 4f
+            val labelY = paddingTop + (maxY - point) * ratioY + textSize / 2.2f
+            if (point > 0) canvas.drawText(point.toString(), labelX, labelY, paint)
+            if (axisOnRight && point == maxY) continue
+            paint.strokeWidth = if (point == 0) 4f else 2f
+            paint.color = if (point == 0 && zeroLineColor != null) zeroLineColor else gridColor
+            canvas.drawLine(innerPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
+        }
+
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.FILL
+        paint.strokeWidth = 8f
+        paint.pathEffect = null
+        paint.color = lineColor
+        val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
+        var lastX = innerPadding
+        var lastY = startY - samples.first().coerceAtLeast(0f) * ratioY
+        for ((index, sample) in samples.withIndex()) {
+            val value = sample.coerceAtLeast(0f)
+            val currentX = index / 60f * ratioX + innerPadding
+            val currentY = startY - value * ratioY
+            canvas.drawLine(lastX, lastY, currentX, currentY, paint)
+            lastX = currentX
+            lastY = currentY
+        }
+        val endX = (samples.size / 60f) * ratioX + innerPadding
+        canvas.drawLine(lastX, lastY, endX, startY - samples.last().coerceAtLeast(0f) * ratioY, paint)
+    }
+
     // Several lines sharing one scale (per-core load, per-cluster
     // frequency): each series is plotted using its own point count for the
     // x-axis, so a core that drops out mid-session (hotplug) just draws a
