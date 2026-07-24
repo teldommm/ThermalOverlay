@@ -108,6 +108,10 @@ class FloatMonitorChartView : View {
         canvas.drawArc(RectF(0f, 0f, mRadius, mRadius), 0f, 360f, false, cyclePaint!!)
 
         cyclePaint!!.color = when {
+            // Real FloatMonitorChartView.b(): `if (i > 98) getFull()` — a ring
+            // at >=98% turns solid red (color_load_full #ff0000). Without this
+            // branch it stayed orange-red at full load.
+            ratioState > 98 -> ContextCompat.getColor(context, R.color.color_load_full)
             ratioState > 90 -> ContextCompat.getColor(context, R.color.color_load_veryhight)
             ratioState > 75 -> ContextCompat.getColor(context, R.color.color_load_hight)
             ratioState > 20 -> ContextCompat.getColor(context, R.color.color_load_mid)

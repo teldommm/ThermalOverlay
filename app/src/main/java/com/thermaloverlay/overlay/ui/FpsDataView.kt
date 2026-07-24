@@ -126,7 +126,9 @@ class FpsDataView : View {
         paint.textAlign = if (axisOnRight) Paint.Align.LEFT else Paint.Align.RIGHT
         for (point in 0..maxY) {
             if (point !in keyValues) continue
-            paint.color = Color.parseColor("#888888")
+            // Right-axis dimension labels use #808080 in the source, only the
+            // left/FPS axis uses #888888.
+            paint.color = if (axisOnRight) Color.parseColor("#808080") else Color.parseColor("#888888")
             val labelX = if (axisOnRight) width - innerPadding + dp2px(8f) else innerPadding - dp2px(4f)
             val labelY = paddingTop + (maxY - point) * ratioY + textSize / 2.2f
             if (point > 0) canvas.drawText(point.toString(), labelX, labelY, paint)

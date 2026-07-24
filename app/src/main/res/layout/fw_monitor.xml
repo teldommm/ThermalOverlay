@@ -145,7 +145,7 @@
                 android:layout_gravity="center"
                     android:gravity="center"
                 android:layout_marginBottom="1dp"
-                android:text="0°C"
+                android:text="0℃"
                 android:textColor="#ffffff"
                 android:textSize="5.6dp"
                 android:textStyle="bold" />
@@ -154,10 +154,9 @@
 
     <TextView
         android:id="@+id/fw_other_info"
-        android:layout_width="match_parent"
+        android:layout_width="70dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical"
-        android:minWidth="70dp"
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
         android:text="Loading……"

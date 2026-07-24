@@ -88,8 +88,13 @@ object SessionChartRenderer {
 
         paint.reset()
         paint.isAntiAlias = true
-        paint.style = Paint.Style.FILL
-        paint.strokeWidth = 8f
+        // The source sets 8f + Style.FILL here, but then overrides both to
+        // Style.STROKE + 4f immediately before its canvas.drawPath — so the
+        // line that actually renders is 4px wide, not 8px. Verified identical
+        // in all five of CpuTemperatureView / DDRView / PowerView /
+        // BatteryIOView / GpuLoadView (both of GpuLoadView's series).
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 4f
         paint.pathEffect = null
         paint.color = lineColor
         val ratioX = (width - innerPadding * 2) / (samples.size / 60f)
@@ -130,7 +135,11 @@ object SessionChartRenderer {
         paint.textAlign = if (axisOnRight) Paint.Align.LEFT else Paint.Align.RIGHT
         for (point in 0..maxY) {
             if (point !in keyValues) continue
-            paint.color = Color.parseColor("#888888")
+            // Left/primary axis labels are #888888, right/secondary axis
+            // labels are #808080 — consistent across every dual-series chart
+            // in the source (FpsDataView, PowerView, BatteryIOView,
+            // CpuCyclesView, GpuLoadView).
+            paint.color = if (axisOnRight) Color.parseColor("#808080") else Color.parseColor("#888888")
             val labelX = if (axisOnRight) width - innerPadding + 8f else innerPadding - 4f
             val labelY = paddingTop + (maxY - point) * ratioY + textSize / 2.2f
             if (point > 0) canvas.drawText(point.toString(), labelX, labelY, paint)
@@ -142,8 +151,13 @@ object SessionChartRenderer {
 
         paint.reset()
         paint.isAntiAlias = true
-        paint.style = Paint.Style.FILL
-        paint.strokeWidth = 8f
+        // The source sets 8f + Style.FILL here, but then overrides both to
+        // Style.STROKE + 4f immediately before its canvas.drawPath — so the
+        // line that actually renders is 4px wide, not 8px. Verified identical
+        // in all five of CpuTemperatureView / DDRView / PowerView /
+        // BatteryIOView / GpuLoadView (both of GpuLoadView's series).
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 4f
         paint.pathEffect = null
         paint.color = lineColor
         val ratioX = (width - innerPadding * 2) / (samples.size / 60f)

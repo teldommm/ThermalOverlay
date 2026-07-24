@@ -3,18 +3,15 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:layout_margin="6dp"
-    android:alpha="0.94"
-    android:background="@drawable/bg_card"
+    android:alpha="0.92"
+    android:background="@drawable/fw_process_bg"
     android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="10dp"
-        android:paddingTop="8dp"
-        android:paddingEnd="6dp">
+        android:orientation="horizontal">
 
         <ImageButton
             android:id="@+id/fw_float_pin"
@@ -41,7 +38,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginRight="2dp"
-            android:text="Apps"
+            android:text="@string/process_filter_apps"
             android:textColor="@color/text_secondary"
             android:textSize="11dp" />
 
@@ -62,7 +59,7 @@
             android:layout_gravity="center_vertical"
             android:layout_marginEnd="2dp"
             android:background="@android:color/transparent"
-            android:padding="4dp"
+            android:padding="6dp"
             android:scaleType="fitCenter"
             android:src="@drawable/dialog_close" />
     </LinearLayout>

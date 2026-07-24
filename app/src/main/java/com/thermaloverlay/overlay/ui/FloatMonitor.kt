@@ -317,7 +317,12 @@ class FloatMonitor(private val mContext: Context) {
                     append("\n")
                 }
 
-                append(whiteBoldSpan("#CPU  " + cpuLoadUtils.getCpuTemperatureText()))
+                // Real px1 renders this line as "<temp>℃" with the single
+                // ℃ glyph (char 8451), not the "°C" two-char sequence the
+                // shared helper emits — convert just here rather than
+                // changing getCpuTemperatureText(), which the FPS recorder
+                // parses via removeSuffix("°C").
+                append(whiteBoldSpan("#CPU  " + cpuLoadUtils.getCpuTemperatureText().replace("°C", "\u2103")))
                 append("\n")
 
                 val perCoreCycles = CpuCyclesUtils.getPerCoreCyclesMhz()
