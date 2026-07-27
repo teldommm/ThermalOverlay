@@ -269,6 +269,51 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
     fun sessionMinFps(sessionId: Long) = aggregate("min", sessionId)
     fun sessionMaxFps(sessionId: Long) = aggregate("max", sessionId)
 
+    private fun scalar(sql: String, sessionId: Long): Float {
+        return try {
+            readableDatabase.rawQuery(sql, arrayOf(sessionId.toString())).use { cursor ->
+                if (cursor.moveToNext()) cursor.getFloat(0) else 0f
+            }
+        } catch (ex: Exception) {
+            0f
+        }
+    }
+
+    // Max CPU temperature — Scene's `select max(cpu_temperature)`.
+    fun sessionMaxCpuTemp(sessionId: Long) =
+        scalar("select max(cpu_temp) from fps_history where session = ?", sessionId)
+
+    // Average power in watts — Scene's `select avg(bat_current * voltage) / 1000`.
+    fun sessionAvgPower(sessionId: Long) =
+        scalar("select avg(current_ma * voltage) / 1000 from fps_history where session = ?", sessionId)
+
+    // FPS variance — sample variance of the fps column. Computed in Kotlin
+    // (SQLite has no variance function) rather than guessed, so it matches a
+    // standard definition.
+    fun sessionFpsVariance(sessionId: Long): Float {
+        val fps = sessionFpsData(sessionId)
+        if (fps.size < 2) return 0f
+        val mean = fps.sum() / fps.size
+        val v = fps.sumOf { ((it - mean) * (it - mean)).toDouble() } / fps.size
+        return v.toFloat()
+    }
+
+    // 5% low FPS — Scene's exact query: average of the worst ceil(count*0.05)
+    // frames, and ONLY for sessions longer than 100 samples (else it shows
+    // "--", which is why short benchmark runs display no value).
+    fun sessionLowFps(sessionId: Long): Float {
+        val count = sessionFpsData(sessionId).size
+        if (count <= 100) return 0f
+        val limit = kotlin.math.ceil(count * 0.05f).toInt()
+        return scalar(
+            "select avg(fps) from (select fps from fps_history where session = ? order by fps asc limit $limit)",
+            sessionId
+        )
+    }
+
+    fun sessionMaxFrameTime(sessionId: Long) =
+        scalar("select max(frame_time) from fps_history where session = ?", sessionId)
+
     fun deleteSession(sessionId: Long): Boolean {
         return try {
             writableDatabase.delete("session", "id = ?", arrayOf(sessionId.toString()))

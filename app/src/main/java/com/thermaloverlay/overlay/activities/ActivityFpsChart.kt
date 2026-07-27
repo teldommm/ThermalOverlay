@@ -62,9 +62,14 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
     private lateinit var fpsMax: TextView
     private lateinit var fpsMin: TextView
     private lateinit var fpsAvg: TextView
+    private lateinit var fpsVariance: TextView
     private lateinit var smoothRatio: TextView
-    private lateinit var feverRatio: TextView
+    private lateinit var lowFpsView: TextView
     private lateinit var tempMax: TextView
+    private lateinit var powerAvg: TextView
+    private lateinit var platform: TextView
+    private lateinit var phone: TextView
+    private lateinit var os: TextView
     private lateinit var rightDimensionLabel: TextView
     private lateinit var chartView: FpsDataView
     private lateinit var cpuTempView: SessionLineChartView
@@ -75,6 +80,7 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
     private lateinit var clusterFreqView: SessionMultiLineChartView
     private lateinit var coreCyclesView: SessionMultiLineChartView
     private lateinit var frameTimeView: SessionJankChartView
+    private lateinit var frameTimeMax: TextView
 
     private var adapter: AdapterSessions? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -95,9 +101,14 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         fpsMax = findViewById(R.id.chart_fps_max)
         fpsMin = findViewById(R.id.chart_fps_min)
         fpsAvg = findViewById(R.id.chart_fps_avg)
+        fpsVariance = findViewById(R.id.chart_fps_variance)
         smoothRatio = findViewById(R.id.chart_smooth_ratio)
-        feverRatio = findViewById(R.id.chart_fever_ratio)
+        lowFpsView = findViewById(R.id.chart_low_fps)
         tempMax = findViewById(R.id.chart_temp_max)
+        powerAvg = findViewById(R.id.chart_power_avg)
+        platform = findViewById(R.id.chart_platform)
+        phone = findViewById(R.id.chart_phone)
+        os = findViewById(R.id.chart_os)
         rightDimensionLabel = findViewById(R.id.chart_right)
         chartView = findViewById(R.id.chart_session_view)
         cpuTempView = findViewById<SessionLineChartView>(R.id.chart_cpu_temp_view).apply { kind = SessionLineChartView.Kind.CPU_TEMPERATURE }
@@ -108,6 +119,7 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         clusterFreqView = findViewById<SessionMultiLineChartView>(R.id.chart_cluster_freq_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CLUSTER_FREQ }
         coreCyclesView = findViewById<SessionMultiLineChartView>(R.id.chart_core_cycles_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_CYCLES }
         frameTimeView = findViewById(R.id.chart_frame_time_view)
+        frameTimeMax = findViewById(R.id.chart_frame_time_max)
 
         sessionsList.layoutManager = LinearLayoutManager(this)
 
@@ -295,17 +307,27 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         if (fpsData.isEmpty()) return
 
         val smooth = fpsData.count { it >= 45 } * 100.0 / fpsData.size
-        val fever = if (temperatureData.isNotEmpty()) temperatureData.count { it > 46 } * 100.0 / temperatureData.size else 0.0
 
         sessionDetail.visibility = View.VISIBLE
         fpsMax.text = String.format("%.1f", fpsWatchStore.sessionMaxFps(sessionId))
         fpsMin.text = String.format("%.1f", fpsWatchStore.sessionMinFps(sessionId))
         fpsAvg.text = String.format("%.1f", fpsWatchStore.sessionAvgFps(sessionId))
+        fpsVariance.text = String.format("%.1f", fpsWatchStore.sessionFpsVariance(sessionId))
         smoothRatio.text = String.format("%.1f%%", smooth)
-        feverRatio.text = String.format("%.1f%%", fever)
+        // 5% low is only defined for sessions longer than 100 samples; Scene
+        // shows "--" otherwise (as in the Burnout screenshot).
+        val lowFps = fpsWatchStore.sessionLowFps(sessionId)
+        lowFpsView.text = if (lowFps > 0f) String.format("%.1f", lowFps) else "--"
         tempMax.text = if (temperatureData.isNotEmpty()) String.format("%.1f\u00b0C", temperatureData.maxOrNull() ?: 0f) else "--"
+        powerAvg.text = String.format("%.2f", fpsWatchStore.sessionAvgPower(sessionId))
         sessionName.text = item.appName
         sessionTime.text = dateFormat.format(Date(item.beginTime))
+
+        // Header: platform (SOC), model, OS version. Profile has no source in
+        // our recorder, so it stays blank rather than showing a placeholder.
+        platform.text = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL.takeIf { it.isNotBlank() } ?: Build.HARDWARE else Build.HARDWARE
+        phone.text = Build.MODEL
+        os.text = "Android ${Build.VERSION.RELEASE}"
         chartView.setSessionId(sessionId)
         cpuTempView.setSessionId(sessionId)
         ddrView.setSessionId(sessionId)
@@ -315,5 +337,10 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         clusterFreqView.setSessionId(sessionId)
         coreCyclesView.setSessionId(sessionId)
         frameTimeView.setSessionId(sessionId)
+
+        // Scene shows the worst frame time of the session under the chart.
+        val frameTimeData = fpsWatchStore.sessionFrameTimeData(sessionId)
+        val maxFrameTime = frameTimeData.maxOrNull() ?: 0f
+        frameTimeMax.text = "MAX: ${maxFrameTime.toInt()}ms"
     }
 }
