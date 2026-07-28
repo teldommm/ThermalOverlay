@@ -208,6 +208,12 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
     fun sessionVoltageData(sessionId: Long) = floatColumn("voltage", sessionId)
     fun sessionFrameTimeData(sessionId: Long) = floatColumn("frame_time", sessionId)
     fun sessionGpuFreqData(sessionId: Long) = floatColumn("gpu_freq", sessionId)
+    // jank_count/big_jank_count were already captured by FrameStatsUtils and
+    // stored (v2->v3 migration) but never read back until now — real
+    // FpsJankView (py0.U()/py0.v()) reads them as Int, so callers should
+    // round these back to Int rather than treating them as continuous.
+    fun sessionJankData(sessionId: Long) = floatColumn("jank_count", sessionId)
+    fun sessionBigJankData(sessionId: Long) = floatColumn("big_jank_count", sessionId)
 
     // Raw rows for a CSV-per-tick column: one entry per tick, each the
     // comma-split values for that tick (core loads, cluster freqs, ...).

@@ -1,18 +1,19 @@
 /**
- * One reusable view for the session-detail screen's four single-metric
- * charts: CPU temperature, DDR frequency, power, and GPU load. In the real
- * app these are separate classes
- * (CpuTemperatureView/DDRView/PowerView/GpuLoadView) that
+ * One reusable view for the session-detail screen's five single-metric
+ * charts: CPU temperature, DDR frequency, power, GPU load, and battery
+ * current. In the real app these are separate classes
+ * (CpuTemperatureView/DDRView/PowerView/GpuLoadView/BatteryIOView) that
  * differ only in data source, scale/gridline rule, and line color — the
  * same near-duplication FpsDataView's own drawSeries already consolidated
  * for its four dimensions, so it's collapsed the same way here via Kind
  * instead of five copies of the same ~150-line class.
  *
- * GPU_LOAD and POWER are the exceptions: the real GpuLoadView/PowerView
- * are dual-axis charts like FpsDataView, not single series. GPU_LOAD pairs
- * GPU frequency (left) with GPU load% (right); POWER pairs watts (left)
- * with battery capacity % (right). CpuTemperatureView and DDRView were
- * checked the same way and are confirmed genuinely single-series.
+ * GPU_LOAD, POWER and BATTERY_CURRENT are the exceptions: the real
+ * GpuLoadView/PowerView/BatteryIOView are dual-axis charts like FpsDataView,
+ * not single series. GPU_LOAD pairs GPU frequency (left) with GPU load%
+ * (right); POWER and BATTERY_CURRENT both pair their own metric (left) with
+ * battery capacity % (right). CpuTemperatureView and DDRView were checked
+ * the same way and are confirmed genuinely single-series.
  *
  * Scale/gridline rules per kind are ported from the real per-class logic
  * (each has its own tiered maxY + key-gridline-value table); DDR is the one
@@ -34,7 +35,7 @@ import android.view.View
 import com.thermaloverlay.overlay.store.FpsWatchStore
 
 class SessionLineChartView : View {
-    enum class Kind { CPU_TEMPERATURE, DDR_FREQUENCY, POWER, GPU_LOAD }
+    enum class Kind { CPU_TEMPERATURE, DDR_FREQUENCY, POWER, GPU_LOAD, BATTERY_CURRENT }
 
     private lateinit var store: FpsWatchStore
     private val paint = Paint()
@@ -77,11 +78,15 @@ class SessionLineChartView : View {
             }
         }
         Kind.GPU_LOAD -> store.sessionGpuLoadData(sessionId)
+        // Real BatteryIOView clamps negative samples (charging current) to
+        // 0 — discharge-only chart, matching PowerView/BatteryIOView's own
+        // "if (sample < 0) 0 else sample" before plotting.
+        Kind.BATTERY_CURRENT -> store.sessionCurrentData(sessionId).map { it.coerceAtLeast(0f) }
     }
 
     private fun lineColor(kind: Kind): Int = when (kind) {
         Kind.CPU_TEMPERATURE, Kind.DDR_FREQUENCY -> Color.parseColor("#87d3ff")
-        Kind.POWER, Kind.GPU_LOAD -> Color.parseColor("#1474e4")
+        Kind.POWER, Kind.GPU_LOAD, Kind.BATTERY_CURRENT -> Color.parseColor("#1474e4")
     }
 
     private fun tieredScale(maxValue: Float, tiers: List<Pair<Float, Int>>, floor: Int, keysFor: (Int) -> List<Int>): Pair<Int, List<Int>> {
@@ -129,6 +134,24 @@ class SessionLineChartView : View {
                 }
             }
             Kind.GPU_LOAD -> 100 to listOf(50, 75, 90, 100)
+            // Ported from real BatteryIOView.f(): 7-tier adaptive scale
+            // (mA), each tier with its own gridline set that always
+            // includes the tier's own ceiling as a final label.
+            Kind.BATTERY_CURRENT -> tieredScale(
+                maxValue,
+                listOf(4000f to 5000, 3000f to 4000, 2500f to 3000, 2000f to 2500, 1500f to 2000, 1000f to 1500),
+                floor = 1000
+            ) { y ->
+                when {
+                    y > 4000 -> listOf(0, 1000, 2000, 3000, 4000, y)
+                    y > 3000 -> listOf(0, 500, 1000, 1500, 2000, 2500, 3000, 3500, y)
+                    y > 2500 -> listOf(0, 500, 1000, 1500, 2000, 2500, y)
+                    y > 2000 -> listOf(0, 400, 800, 1200, 1600, 2000, y)
+                    y > 1500 -> listOf(0, 400, 800, 1200, 1600, 2000)
+                    y > 1000 -> listOf(0, 300, 600, 900, 1200, 1500)
+                    else -> listOf(0, 200, 400, 600, 800, 1000)
+                }
+            }
         }
     }
 
@@ -204,14 +227,15 @@ class SessionLineChartView : View {
         val leftPadding = SessionChartRenderer.axisLabelPadding(paint, maxY, textSize, density)
         SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, samples.size, leftPadding, innerPadding, paddingTop, textSize, density)
         // Power and battery current are also dual-series in the source —
-        // CPU load% drawn alongside on the right axis — unlike
+        // battery capacity% drawn alongside on the right axis (confirmed
+        // directly from BatteryIOView.f()'s trailing call to e()) — unlike
         // CpuTemperatureView/DDRView, confirmed genuinely single-series.
         SessionChartRenderer.drawDualAxisSeries(
             canvas, paint, width, height, samples, maxY, keys, axisOnRight = false,
             lineColor = lineColor(kind), gridColor = Color.parseColor("#aa888888"),
             zeroLineColor = Color.parseColor("#888888"), leftPadding, innerPadding, paddingTop, textSize, 2f * density
         )
-        if (kind == Kind.POWER) {
+        if (kind == Kind.POWER || kind == Kind.BATTERY_CURRENT) {
             drawCapacitySecondary(canvas, width, height, leftPadding, innerPadding, paddingTop, textSize)
         }
     }

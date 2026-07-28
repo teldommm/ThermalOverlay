@@ -94,6 +94,14 @@ class FpsDataView : View {
     // connecting line through `samples`. `keyValues` are the only y-values
     // that get a tick; pass an empty list to draw just the line (used for
     // the GPU pass in the LOAD dimension, which shares the CPU pass's axis).
+    //
+    // `minY` lets the axis floor sit above 0 — the real TEMPERATURE
+    // dimension does this (floor 10 instead of 0) in one specific case.
+    // `dataRange`, when non-null, suppresses gridlines/labels whose value
+    // sits more than 5 units outside [dataMin, dataMax] — again a
+    // TEMPERATURE-only behavior in the source (h(), the real
+    // CpuTemperatureView-equivalent branch): far-away tier gridlines are
+    // skipped entirely rather than just left unlabeled.
     private fun drawSeries(
         canvas: Canvas,
         samples: List<Float>,
@@ -105,10 +113,12 @@ class FpsDataView : View {
         zeroLineColor: Int?,
         innerPadding: Float,
         paddingTop: Float,
-        textSize: Float
+        textSize: Float,
+        minY: Int = 0,
+        dataRange: Pair<Float, Float>? = null
     ) {
         if (samples.size < 2) return
-        val ratioY = (height - innerPadding - paddingTop) / maxY
+        val ratioY = (height - innerPadding - paddingTop) / (maxY - minY)
         val startY = height - innerPadding
 
         paint.reset()
@@ -117,18 +127,19 @@ class FpsDataView : View {
         paint.strokeWidth = 2f
         paint.pathEffect = dashEffect
         paint.textAlign = if (axisOnRight) Paint.Align.LEFT else Paint.Align.RIGHT
-        for (point in 0..maxY) {
+        for (point in minY..maxY) {
             if (point !in keyValues) continue
+            // Right-hand dimensions skip the gridline right at the very top
+            // (it would sit under the FPS axis); the left/FPS axis draws
+            // every tick including its own top.
+            if (axisOnRight && point == maxY) continue
+            if (dataRange != null && (point < dataRange.first - 5 || point > dataRange.second + 5)) continue
             // Right-axis dimension labels use #808080 in the source, only the
             // left/FPS axis uses #888888.
             paint.color = if (axisOnRight) Color.parseColor("#808080") else Color.parseColor("#888888")
             val labelX = if (axisOnRight) width - innerPadding + dp2px(8f) else innerPadding - dp2px(4f)
             val labelY = paddingTop + (maxY - point) * ratioY + textSize / 2.2f
-            if (point > 0) canvas.drawText(point.toString(), labelX, labelY, paint)
-            // Right-hand dimensions skip the gridline right at the very top
-            // (it would sit under the FPS axis); the left/FPS axis draws
-            // every tick including its own top.
-            if (axisOnRight && point == maxY) continue
+            if (point > minY) canvas.drawText(point.toString(), labelX, labelY, paint)
             paint.strokeWidth = if (point == 0) 4f else 2f
             paint.color = if (point == 0 && zeroLineColor != null) zeroLineColor else gridColor
             canvas.drawLine(innerPadding, paddingTop + (maxY - point) * ratioY, width - innerPadding, paddingTop + (maxY - point) * ratioY, paint)
@@ -150,10 +161,10 @@ class FpsDataView : View {
         paint.color = lineColor
         val ratioX = (width - innerPadding * 2) / ((samples.size - 1) / 60f)
         var lastX = innerPadding
-        var lastY = startY - samples.first() * ratioY
+        var lastY = startY - (samples.first() - minY) * ratioY
         for ((index, sample) in samples.withIndex()) {
             val currentX = index / 60f * ratioX + innerPadding
-            val currentY = startY - sample * ratioY
+            val currentY = startY - (sample - minY) * ratioY
             canvas.drawLine(lastX, lastY, currentX, currentY, paint)
             lastX = currentX
             lastY = currentY
@@ -173,14 +184,20 @@ class FpsDataView : View {
         }
     }
 
-    private fun temperatureScale(samples: List<Float>): Pair<Int, List<Int>> {
+    // Returns (minY, maxY, keys). `fpsKeyCount` is the FPS dimension's own
+    // gridline-key count (fpsScale(...).second.size) — the real source
+    // (h()) shifts this axis's floor from 0 to 10 specifically when
+    // maxY==50 and that count==5, compressing the visible range instead of
+    // wasting space down to 0.
+    private fun temperatureScale(samples: List<Float>, fpsKeyCount: Int): Triple<Int, Int, List<Int>> {
         val maxValue = samples.maxOrNull()!!
         val maxValueInt = maxValue.toInt() + (if (maxValue % 1 == 0f) 1 else 0)
         // Only capped/bucketed below 60 (into 50 or 60); above that the
         // source uses the raw max uncapped, unlike the four-tier cascade
         // this used to have.
         val maxY = if (maxValueInt > 60) maxValueInt else if (maxValueInt > 55) 60 else 50
-        return maxY to listOf(30, 35, 40, 45, 50, 55, 60, 65)
+        val minY = if (maxY == 50 && fpsKeyCount == 5) 10 else 0
+        return Triple(minY, maxY, listOf(30, 35, 40, 45, 50, 55, 60, 65))
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -206,11 +223,14 @@ class FpsDataView : View {
             Dimension.TEMPERATURE -> {
                 val samples = store.sessionTemperatureData(sessionId)
                 if (samples.isNotEmpty()) {
-                    val (maxY, keys) = temperatureScale(samples)
+                    val (minY, maxY, keys) = temperatureScale(samples, fpsKeys.size)
+                    val dataMin = samples.minOrNull()!!
+                    val dataMax = samples.maxOrNull()!!
                     drawSeries(
                         canvas, samples, maxY, keys, axisOnRight = true,
                         lineColor = Color.parseColor("#8087d3ff"), gridColor = Color.parseColor("#4087d3ff"),
-                        zeroLineColor = null, innerPadding, paddingTop, textSize
+                        zeroLineColor = null, innerPadding, paddingTop, textSize,
+                        minY = minY, dataRange = dataMin to dataMax
                     )
                 }
             }
@@ -228,14 +248,17 @@ class FpsDataView : View {
                 val cpuSamples = store.sessionCpuLoadData(sessionId)
                 val gpuSamples = store.sessionGpuLoadData(sessionId)
                 if (cpuSamples.isNotEmpty() && gpuSamples.isNotEmpty()) {
-                    // Source's key set here technically varies with which
-                    // FPS-axis tier is active (sparser {25,50,75,100} in a
-                    // couple of edge-case tiers, to avoid overcrowding
-                    // alongside the FPS gridlines) — {20,40,60,80,100} is
-                    // its default/common case, used here throughout rather
-                    // than threading that cross-axis dependency through.
+                    // Source's key set varies with which FPS-axis tier is
+                    // active: the FPS scale's own gridline count is 4 or 5
+                    // for its two lowest tiers (<=62, <=92) — in exactly
+                    // those cases LOAD uses the sparser {25,50,75,100};
+                    // every higher FPS tier (key count 6 or 7) uses the
+                    // denser {20,40,60,80,100}. Confirmed directly from
+                    // FpsDataView.f(): `i==5 || i==4 -> sparse`.
+                    val loadKeys = if (fpsKeys.size == 4 || fpsKeys.size == 5)
+                        listOf(25, 50, 75, 100) else listOf(20, 40, 60, 80, 100)
                     drawSeries(
-                        canvas, cpuSamples, 100, listOf(20, 40, 60, 80, 100), axisOnRight = true,
+                        canvas, cpuSamples, 100, loadKeys, axisOnRight = true,
                         lineColor = Color.parseColor("#80fc6bc5"), gridColor = Color.parseColor("#4087d3ff"),
                         zeroLineColor = null, innerPadding, paddingTop, textSize
                     )

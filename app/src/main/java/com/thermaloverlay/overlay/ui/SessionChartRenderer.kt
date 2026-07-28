@@ -23,6 +23,18 @@ import android.graphics.Path
 object SessionChartRenderer {
     private val dashEffect = DashPathEffect(floatArrayOf(4f, 8f), 0f)
 
+    // Shared by CPU_CLUSTER_FREQ, CPU_CORE_CYCLES and CpuFrequencyStatView
+    // (all confirmed to use this exact rule in the real
+    // CpuFrequencyView/CpuCyclesView/CpuFrequencyStat): the axis always
+    // labels the true top value (maxY itself, not just a round tier
+    // number) whenever the nearest regular gridline below it is more than
+    // 100 units away — for EVERY tier.
+    fun frequencyAxisKeys(maxY: Int): List<Int> {
+        val base = if (maxY > 3300) (0..4400 step 400).toList() else (0..3300 step 300).toList()
+        val nearestBelow = base.filter { it <= maxY }.maxOrNull() ?: 0
+        return if (maxY - nearestBelow > 100) base + maxY else base
+    }
+
     /**
      * Left padding, sized to the widest y-axis label exactly like the source:
      * it builds a string of '9' as long as maxY's digit count, measures it and

@@ -1,9 +1,21 @@
 /**
- * Frame-time chart for a recorded session: the worst frame of each tick in
- * milliseconds, on the source's fixed 0-100ms scale with its 8.33ms-multiple
- * gridlines, drawn in the step/bar style FrameTimeView uses rather than an
- * interpolated line. Data comes from our own FrameStatsUtils collection —
- * see its doc comment for why the original's source is unavailable.
+ * Two step/bar charts for a recorded session, sharing one View like
+ * SessionLineChartView's Kind pattern:
+ *
+ * - FRAME_TIME: the worst frame of each tick in milliseconds, on the
+ *   source's fixed 0-100ms scale with its 8.33ms-multiple gridlines
+ *   (matches real FrameTimeView). Data comes from our own FrameStatsUtils
+ *   collection — see its doc comment for why the original's source is
+ *   unavailable.
+ * - JANK: jank + big-jank counts per tick, overlaid as two step charts
+ *   (matches real FpsJankView). Data was already being captured and
+ *   stored by FrameStatsUtils/FpsWatchStore (jank_count/big_jank_count,
+ *   schema since v3) but never read back or rendered until now.
+ *   The y-axis scale is NOT based on the session's max jank value — the
+ *   source scales off the LAST sample only (`arrayListU.last()`, i.e.
+ *   whatever jank count the most recent tick had), floored at 3. This
+ *   means the axis can visually re-scale as a session plays out; kept
+ *   exactly as the source does it rather than "fixed" to an overall max.
  */
 package com.thermaloverlay.overlay.ui
 
@@ -16,8 +28,15 @@ import android.view.View
 import com.thermaloverlay.overlay.store.FpsWatchStore
 
 class SessionJankChartView : View {
+    enum class Kind { FRAME_TIME, JANK }
+
     private lateinit var store: FpsWatchStore
     private val paint = Paint()
+    var kind: Kind = Kind.FRAME_TIME
+        set(value) {
+            field = value
+            invalidate()
+        }
     private var sessionId = 0L
 
     constructor(context: Context) : super(context) {
@@ -61,13 +80,7 @@ class SessionJankChartView : View {
         }
     }
 
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        if (sessionId < 1) return
-
-        val innerPadding = dp2px(18f)
-        val paddingTop = dp2px(4f)
-        val textSize = dp2px(8.5f)
+    private fun drawFrameTime(canvas: Canvas, innerPadding: Float, paddingTop: Float, textSize: Float) {
         // FrameTimeView reaches the same place by a different route:
         // `fMeasureText = measureText("999")` then `f5 = fMeasureText + f4`
         // with f4 = 4dp — so it is not a special case after all.
@@ -82,5 +95,53 @@ class SessionJankChartView : View {
             canvas, paint, width, height, samples, 100,
             Color.parseColor("#87d3ff"), Paint.Style.STROKE, leftPadding, innerPadding, paddingTop
         )
+    }
+
+    // maxY/keys rule ported from real FpsJankView.e(): scale is driven by
+    // the LAST jank sample (not the session max), floored at 3.
+    private fun jankScale(lastJank: Int): Pair<Int, List<Int>> {
+        val maxY = if (lastJank > 3) lastJank else 3
+        val keys = when {
+            maxY > 5 -> listOf(0, 5, 10, 15, 20)
+            maxY > 3 -> listOf(0, 3, 6, 9)
+            else -> listOf(0, 1, 2, 3)
+        }
+        return maxY to keys
+    }
+
+    private fun drawJank(canvas: Canvas, innerPadding: Float, paddingTop: Float, textSize: Float) {
+        val jank = store.sessionJankData(sessionId)
+        val bigJank = store.sessionBigJankData(sessionId)
+        if (jank.isEmpty() || bigJank.isEmpty()) return
+
+        val (maxY, keys) = jankScale(jank.last().toInt())
+        val leftPadding = SessionChartRenderer.axisLabelPadding(paint, maxY, textSize, density)
+        val labelOffset = 2f * density
+
+        drawAxes(canvas, jank.size, maxY, keys, leftPadding, innerPadding, paddingTop, textSize, labelOffset)
+        // Jank first, big-jank drawn on top — matches the source's draw
+        // order (py0.U() series, then py0.v() series).
+        SessionChartRenderer.drawStepSeries(
+            canvas, paint, width, height, jank, maxY,
+            Color.parseColor("#8087d3ff"), Paint.Style.STROKE, leftPadding, innerPadding, paddingTop
+        )
+        SessionChartRenderer.drawStepSeries(
+            canvas, paint, width, height, bigJank, maxY,
+            Color.parseColor("#FDB6E2"), Paint.Style.STROKE, leftPadding, innerPadding, paddingTop
+        )
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        if (sessionId < 1) return
+
+        val innerPadding = dp2px(18f)
+        val paddingTop = dp2px(4f)
+        val textSize = dp2px(8.5f)
+
+        when (kind) {
+            Kind.FRAME_TIME -> drawFrameTime(canvas, innerPadding, paddingTop, textSize)
+            Kind.JANK -> drawJank(canvas, innerPadding, paddingTop, textSize)
+        }
     }
 }

@@ -118,6 +118,34 @@ class CpuFrequencyUtils {
         return if (ddrPathIsMccc) (raw / 500_000L).toString() else (raw / 500L).toString()
     }
 
+    /**
+     * Cluster line/bar color palette, ported from the source's e51.a() —
+     * conditional on topology, not a fixed list. Shared by
+     * SessionMultiLineChartView (per-core/cluster line charts) and
+     * CpuFrequencyStatView (the frequency histogram), both of which call
+     * this same e51().a() in the real app.
+     *
+     *   maxFreq(core0) >= 2.7GHz AND exactly 2 clusters
+     *        -> #00d5d9, #fc8a1b, #fc8a1b, #fc8a1b
+     *   more than 3 clusters
+     *        -> #B177E3, #00d5d9, #00B9C2, #fc8a1b
+     *   otherwise (2 or 3 clusters)
+     *        -> #B177E3, #00d5d9, #fc8a1b, #fc8a1b
+     */
+    fun getClusterColors(): List<Int> {
+        val purple = android.graphics.Color.parseColor("#B177E3")
+        val cyan = android.graphics.Color.parseColor("#00d5d9")
+        val teal = android.graphics.Color.parseColor("#00B9C2")
+        val orange = android.graphics.Color.parseColor("#fc8a1b")
+        val clusterCount = getClusterInfo().size
+        val core0Max = getCoreMaxFrequency(0)
+        return when {
+            core0Max >= 2_700_000 && clusterCount == 2 -> listOf(cyan, orange, orange, orange)
+            clusterCount > 3 -> listOf(purple, cyan, teal, orange)
+            else -> listOf(purple, cyan, orange, orange)
+        }
+    }
+
     private fun getCpuFreqValue(path: String): String {
         val freqValue = nativeProp.getKernelPropLong(path)
         return if (freqValue > -1) freqValue.toString() else ""

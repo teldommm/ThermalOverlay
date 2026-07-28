@@ -32,32 +32,10 @@ class SessionMultiLineChartView : View {
     enum class Kind { CPU_CORE_LOADS, CPU_CLUSTER_FREQ, CPU_CORE_CYCLES }
 
     private val cpuFrequencyUtils = CpuFrequencyUtils()
-    // Cluster palette, ported from the source's e51.a(): it is conditional on
-    // the topology, not a fixed list. `l(0)` there is core 0's rated max
-    // frequency in kHz.
-    //
-    //   maxFreq(core0) >= 2.7GHz AND exactly 2 clusters
-    //        -> #00d5d9, #fc8a1b, #fc8a1b, #fc8a1b
-    //   more than 3 clusters
-    //        -> #B177E3, #00d5d9, #00B9C2, #fc8a1b
-    //   otherwise (2 or 3 clusters)
-    //        -> #B177E3, #00d5d9, #fc8a1b, #fc8a1b
-    //
-    // The port previously hardcoded only the >3-cluster row, so line colours
-    // were wrong on every 2- and 3-cluster SoC.
-    private val clusterColors: List<Int> by lazy {
-        val purple = Color.parseColor("#B177E3")
-        val cyan = Color.parseColor("#00d5d9")
-        val teal = Color.parseColor("#00B9C2")
-        val orange = Color.parseColor("#fc8a1b")
-        val clusterCount = cpuFrequencyUtils.getClusterInfo().size
-        val core0Max = cpuFrequencyUtils.getCoreMaxFrequency(0)
-        when {
-            core0Max >= 2_700_000 && clusterCount == 2 -> listOf(cyan, orange, orange, orange)
-            clusterCount > 3 -> listOf(purple, cyan, teal, orange)
-            else -> listOf(purple, cyan, orange, orange)
-        }
-    }
+    // Cluster palette — see CpuFrequencyUtils.getClusterColors() for the
+    // full derivation (ported from the source's e51.a(), conditional on
+    // topology). Shared with CpuFrequencyStatView.
+    private val clusterColors: List<Int> by lazy { cpuFrequencyUtils.getClusterColors() }
 
     private lateinit var store: FpsWatchStore
     private val paint = Paint()
@@ -131,11 +109,7 @@ class SessionMultiLineChartView : View {
                 val sampleCount = series.maxOf { it.size }
                 val rawMax = series.mapNotNull { it.maxOrNull() }.maxOrNull()?.toInt() ?: 0
                 val maxY = maxOf(rawMax, 2100)
-                val keys = when {
-                    maxY > 4400 -> (0..4400 step 400).toList() + maxY
-                    maxY > 3300 -> (0..4400 step 400).toList()
-                    else -> (0..3300 step 300).toList()
-                }
+                val keys = SessionChartRenderer.frequencyAxisKeys(maxY)
                 val leftPadding = SessionChartRenderer.axisLabelPadding(paint, maxY, textSize, density)
                 val labelOffset = 3.5f * density  // CpuFrequencyView/CpuCyclesView: fMeasureText - 3.5dp
                 SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, leftPadding, innerPadding, paddingTop, textSize, density)
@@ -175,11 +149,7 @@ class SessionMultiLineChartView : View {
                         if (v > maxY && v < ceiling) maxY = v
                     }
                 }
-                val keys = when {
-                    maxY > 4400 -> (0..4400 step 400).toList() + maxY
-                    maxY > 3300 -> (0..4400 step 400).toList()
-                    else -> (0..3300 step 300).toList()
-                }
+                val keys = SessionChartRenderer.frequencyAxisKeys(maxY)
                 val leftPadding = SessionChartRenderer.axisLabelPadding(paint, maxY, textSize, density)
                 val labelOffset = 3.5f * density  // CpuFrequencyView/CpuCyclesView: fMeasureText - 3.5dp
                 SessionChartRenderer.drawTimeAxis(canvas, paint, width, height, sampleCount, leftPadding, innerPadding, paddingTop, textSize, density)

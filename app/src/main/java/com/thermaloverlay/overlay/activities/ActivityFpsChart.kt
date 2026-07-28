@@ -41,6 +41,7 @@ import com.thermaloverlay.overlay.R
 import com.thermaloverlay.overlay.model.FpsWatchSession
 import com.thermaloverlay.overlay.store.FpsWatchStore
 import com.thermaloverlay.overlay.ui.AdapterSessions
+import com.thermaloverlay.overlay.ui.CpuFrequencyStatView
 import com.thermaloverlay.overlay.ui.FloatFpsWatch
 import com.thermaloverlay.overlay.ui.FpsDataView
 import com.thermaloverlay.overlay.ui.SessionLineChartView
@@ -72,15 +73,26 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
     private lateinit var os: TextView
     private lateinit var rightDimensionLabel: TextView
     private lateinit var chartView: FpsDataView
-    private lateinit var cpuTempView: SessionLineChartView
-    private lateinit var ddrView: SessionLineChartView
-    private lateinit var powerView: SessionLineChartView
-    private lateinit var gpuLoadView: SessionLineChartView
-    private lateinit var coreLoadsView: SessionMultiLineChartView
-    private lateinit var clusterFreqView: SessionMultiLineChartView
-    private lateinit var coreCyclesView: SessionMultiLineChartView
+    private lateinit var jankView: SessionJankChartView
     private lateinit var frameTimeView: SessionJankChartView
     private lateinit var frameTimeMax: TextView
+    private lateinit var coreLoadsView: SessionMultiLineChartView
+    private lateinit var clusterFreqTitle: TextView
+    private lateinit var clusterFreqView: SessionMultiLineChartView
+    private lateinit var clusterFreqStatView: CpuFrequencyStatView
+    private lateinit var coreCyclesView: SessionMultiLineChartView
+    private lateinit var gpuLoadView: SessionLineChartView
+    private lateinit var ddrView: SessionLineChartView
+    private lateinit var powerToggleTitle: TextView
+    private lateinit var powerView: SessionLineChartView
+    private lateinit var cpuTempView: SessionLineChartView
+
+    // Real app toggles CpuFrequencyView<->CpuFrequencyStat and
+    // PowerView<->BatteryIOView in place via a tap; tracked here since we
+    // share one view/title pair for each instead of two separate view
+    // instances (same end result).
+    private var showingFreqHistogram = false
+    private var showingBatteryCurrent = false
 
     private var adapter: AdapterSessions? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -111,20 +123,26 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         os = findViewById(R.id.chart_os)
         rightDimensionLabel = findViewById(R.id.chart_right)
         chartView = findViewById(R.id.chart_session_view)
-        cpuTempView = findViewById<SessionLineChartView>(R.id.chart_cpu_temp_view).apply { kind = SessionLineChartView.Kind.CPU_TEMPERATURE }
-        ddrView = findViewById<SessionLineChartView>(R.id.chart_ddr_view).apply { kind = SessionLineChartView.Kind.DDR_FREQUENCY }
-        powerView = findViewById<SessionLineChartView>(R.id.chart_power_view).apply { kind = SessionLineChartView.Kind.POWER }
-        gpuLoadView = findViewById<SessionLineChartView>(R.id.chart_gpu_load_view).apply { kind = SessionLineChartView.Kind.GPU_LOAD }
-        coreLoadsView = findViewById<SessionMultiLineChartView>(R.id.chart_core_loads_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_LOADS }
-        clusterFreqView = findViewById<SessionMultiLineChartView>(R.id.chart_cluster_freq_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CLUSTER_FREQ }
-        coreCyclesView = findViewById<SessionMultiLineChartView>(R.id.chart_core_cycles_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_CYCLES }
-        frameTimeView = findViewById(R.id.chart_frame_time_view)
+        jankView = findViewById<SessionJankChartView>(R.id.chart_jank_view).apply { kind = SessionJankChartView.Kind.JANK }
+        frameTimeView = findViewById<SessionJankChartView>(R.id.chart_frame_time_view).apply { kind = SessionJankChartView.Kind.FRAME_TIME }
         frameTimeMax = findViewById(R.id.chart_frame_time_max)
+        coreLoadsView = findViewById<SessionMultiLineChartView>(R.id.chart_core_loads_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_LOADS }
+        clusterFreqTitle = findViewById(R.id.chart_cluster_freq_title)
+        clusterFreqView = findViewById<SessionMultiLineChartView>(R.id.chart_cluster_freq_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CLUSTER_FREQ }
+        clusterFreqStatView = findViewById(R.id.chart_cluster_freq_stat_view)
+        coreCyclesView = findViewById<SessionMultiLineChartView>(R.id.chart_core_cycles_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_CYCLES }
+        gpuLoadView = findViewById<SessionLineChartView>(R.id.chart_gpu_load_view).apply { kind = SessionLineChartView.Kind.GPU_LOAD }
+        ddrView = findViewById<SessionLineChartView>(R.id.chart_ddr_view).apply { kind = SessionLineChartView.Kind.DDR_FREQUENCY }
+        powerToggleTitle = findViewById(R.id.chart_power_toggle_title)
+        powerView = findViewById<SessionLineChartView>(R.id.chart_power_view).apply { kind = SessionLineChartView.Kind.POWER }
+        cpuTempView = findViewById<SessionLineChartView>(R.id.chart_cpu_temp_view).apply { kind = SessionLineChartView.Kind.CPU_TEMPERATURE }
 
         sessionsList.layoutManager = LinearLayoutManager(this)
 
         recordButton.setOnClickListener { onRecordButtonClicked() }
         rightDimensionLabel.setOnClickListener { onRightDimensionClicked() }
+        clusterFreqTitle.setOnClickListener { onClusterFreqTitleClicked() }
+        powerToggleTitle.setOnClickListener { onPowerToggleClicked() }
 
         loadSessions()
     }
@@ -211,6 +229,26 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         } else {
             getString(R.string.fps_chart_start_recording)
         }
+    }
+
+    // Matches real cpu_freq_stat: swaps the CPU_CLUSTER_FREQ line chart for
+    // the CpuFrequencyStatView histogram in place. Real app keeps the same
+    // static title for both states, so only visibility toggles here.
+    private fun onClusterFreqTitleClicked() {
+        showingFreqHistogram = !showingFreqHistogram
+        clusterFreqView.visibility = if (showingFreqHistogram) View.GONE else View.VISIBLE
+        clusterFreqStatView.visibility = if (showingFreqHistogram) View.VISIBLE else View.GONE
+    }
+
+    // Matches real chart_toggle_w: swaps Power(W) for Battery Current(mA)
+    // in place. Unlike the frequency toggle, the real app's title text
+    // also changes between the two states (chart_toggle_w_text).
+    private fun onPowerToggleClicked() {
+        showingBatteryCurrent = !showingBatteryCurrent
+        powerView.kind = if (showingBatteryCurrent) SessionLineChartView.Kind.BATTERY_CURRENT else SessionLineChartView.Kind.POWER
+        powerToggleTitle.text = getString(
+            if (showingBatteryCurrent) R.string.fps_chart_section_battery_current else R.string.fps_chart_section_power
+        )
     }
 
     private fun onRightDimensionClicked() {
@@ -329,14 +367,16 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         phone.text = Build.MODEL
         os.text = "Android ${Build.VERSION.RELEASE}"
         chartView.setSessionId(sessionId)
-        cpuTempView.setSessionId(sessionId)
-        ddrView.setSessionId(sessionId)
-        powerView.setSessionId(sessionId)
-        gpuLoadView.setSessionId(sessionId)
+        jankView.setSessionId(sessionId)
+        frameTimeView.setSessionId(sessionId)
         coreLoadsView.setSessionId(sessionId)
         clusterFreqView.setSessionId(sessionId)
+        clusterFreqStatView.setSessionId(sessionId)
         coreCyclesView.setSessionId(sessionId)
-        frameTimeView.setSessionId(sessionId)
+        gpuLoadView.setSessionId(sessionId)
+        ddrView.setSessionId(sessionId)
+        powerView.setSessionId(sessionId)
+        cpuTempView.setSessionId(sessionId)
 
         // Scene shows the worst frame time of the session under the chart.
         val frameTimeData = fpsWatchStore.sessionFrameTimeData(sessionId)
