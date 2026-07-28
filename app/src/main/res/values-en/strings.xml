@@ -65,7 +65,7 @@
     <string name="fps_chart_dimension_temperature">Temperature</string>
     <string name="fps_chart_dimension_battery">Battery</string>
     <string name="fps_chart_dimension_load">CPU/GPU load</string>
-    <string name="fps_chart_smooth_label">Smooth</string>
+    <string name="fps_chart_smooth_label">Smoothness</string>
     <string name="fps_chart_temp_label">Temperature</string>
     <string name="fps_chart_section_cpu_temp">CPU Temperature(℃)</string>
     <string name="fps_chart_section_ddr">DDR(MHz | Mbps)</string>

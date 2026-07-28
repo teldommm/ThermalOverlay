@@ -29,6 +29,7 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -60,6 +61,7 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
     private lateinit var sessionDetail: View
     private lateinit var sessionName: TextView
     private lateinit var sessionTime: TextView
+    private lateinit var sessionLogo: ImageView
     private lateinit var fpsMax: TextView
     private lateinit var fpsMin: TextView
     private lateinit var fpsAvg: TextView
@@ -110,6 +112,7 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         sessionDetail = findViewById(R.id.chart_session_detail)
         sessionName = findViewById(R.id.chart_session_name)
         sessionTime = findViewById(R.id.chart_session_time)
+        sessionLogo = findViewById(R.id.session_logo)
         fpsMax = findViewById(R.id.chart_fps_max)
         fpsMin = findViewById(R.id.chart_fps_min)
         fpsAvg = findViewById(R.id.chart_fps_avg)
@@ -356,10 +359,14 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         // shows "--" otherwise (as in the Burnout screenshot).
         val lowFps = fpsWatchStore.sessionLowFps(sessionId)
         lowFpsView.text = if (lowFps > 0f) String.format("%.1f", lowFps) else "--"
-        tempMax.text = if (temperatureData.isNotEmpty()) String.format("%.1f\u00b0C", temperatureData.maxOrNull() ?: 0f) else "--"
+        // Scene consistently uses the single ℃ glyph (U+2103), not two-char
+        // °C — same convention already fixed elsewhere (FloatMonitor's #CPU
+        // line, every chart section title).
+        tempMax.text = if (temperatureData.isNotEmpty()) String.format("%.1f\u2103", temperatureData.maxOrNull() ?: 0f) else "--"
         powerAvg.text = String.format("%.2f", fpsWatchStore.sessionAvgPower(sessionId))
         sessionName.text = item.appName
         sessionTime.text = dateFormat.format(Date(item.beginTime))
+        sessionLogo.setImageDrawable(item.appIcon)
 
         // Header: platform (SOC), model, OS version. Profile has no source in
         // our recorder, so it stays blank rather than showing a placeholder.

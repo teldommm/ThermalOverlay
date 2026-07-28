@@ -123,6 +123,12 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <!-- Scene: app icon + recording time on the left (baseline-
+                 aligned), app name right-aligned — matches session_logo/
+                 chart_session_time/chart_session_name in
+                 activity_fps_session.xml exactly (its chart_view_size
+                 neighbor is dead code in the real app too, nothing ever
+                 sets it, so it's not ported). -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -130,22 +136,29 @@
                 android:gravity="center_vertical"
                 android:layout_marginBottom="12dp">
 
-                <TextView
-                    android:id="@+id/chart_session_name"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
+                <ImageView
+                    android:id="@+id/session_logo"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp" />
 
                 <TextView
                     android:id="@+id/chart_session_time"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp"
                     android:fontFamily="sans-serif-condensed-light" />
+
+                <TextView
+                    android:id="@+id/chart_session_name"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:gravity="end"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
             </LinearLayout>
 
             <LinearLayout
@@ -234,7 +247,7 @@
                     android:orientation="vertical"
                     android:gravity="center_horizontal">
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="MAX" android:textColor="@color/text_secondary" android:textSize="10sp" />
-                    <TextView android:id="@+id/chart_temp_max" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0.0\u00b0C" android:textColor="@color/accent" android:textSize="18sp" android:textStyle="bold" />
+                    <TextView android:id="@+id/chart_temp_max" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0.0\u2103" android:textColor="@color/accent" android:textSize="18sp" android:textStyle="bold" />
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/fps_chart_temp_label" android:textColor="@color/text_secondary" android:textSize="10sp" />
                 </LinearLayout>
 
