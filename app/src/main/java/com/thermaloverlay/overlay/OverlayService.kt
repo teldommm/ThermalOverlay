@@ -20,6 +20,7 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         startForeground(NOTIFICATION_ID, buildNotification())
 
         // Kill a simpleperf stream orphaned by a previous process death
@@ -41,6 +42,12 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        // Set first: this only runs on a clean stop (stopSelf/stopService).
+        // A force-stop, OOM kill, or crash takes the whole process down
+        // without ever reaching here — isRunning's default (false) on the
+        // next process start is what actually protects against a stale
+        // "enabled" flag in that case, not this line. See MainActivity.refreshUi().
+        isRunning = false
         floatMonitor?.hidePopupWindow()
         floatMonitor = null
         OverlayPrefs.setEnabled(this, false)
@@ -72,5 +79,13 @@ class OverlayService : Service() {
         private const val CHANNEL_ID = "perf_overlay_service"
         private const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "com.thermaloverlay.overlay.action.STOP"
+
+        // Same-process ground truth for "is an actual Service instance alive
+        // right now". Defaults to false on every fresh process start, which
+        // is exactly what makes it useful: if the process was killed without
+        // onDestroy() running, this correctly reads false even though
+        // OverlayPrefs.isEnabled() may still (wrongly) say true.
+        @Volatile var isRunning: Boolean = false
+            private set
     }
 }

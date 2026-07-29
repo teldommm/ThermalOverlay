@@ -63,7 +63,27 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        reconcileOverlayState()
         refreshUi()
+    }
+
+    // OverlayPrefs.isEnabled() is only reliable when the service got to clean
+    // up after itself. A force-stop, an OOM kill, or a crash takes the whole
+    // process down without ever running OverlayService.onDestroy(), so the
+    // flag can be stuck on "true" forever. OverlayService.isRunning defaults
+    // to false on every fresh process start, so this catches exactly that
+    // case and self-corrects.
+    //
+    // Deliberately NOT called from refreshUi() itself: onStartClicked() calls
+    // refreshUi() synchronously right after starting the service, and
+    // OverlayService.onCreate() hasn't run yet at that point — isRunning
+    // would still read false and this would immediately wipe the flag we
+    // just set to true. onResume() never fires in that same synchronous
+    // window, so it doesn't race with a start that's still in flight.
+    private fun reconcileOverlayState() {
+        if (OverlayPrefs.isEnabled(this) && !OverlayService.isRunning) {
+            OverlayPrefs.setEnabled(this, false)
+        }
     }
 
     private fun checkRootAccess() {
