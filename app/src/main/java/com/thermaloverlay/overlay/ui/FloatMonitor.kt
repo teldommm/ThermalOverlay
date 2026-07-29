@@ -32,6 +32,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.thermaloverlay.overlay.OverlayPrefs
+import com.thermaloverlay.overlay.OverlayService
 import com.thermaloverlay.overlay.R
 import com.thermaloverlay.overlay.metrics.BatteryStatusReader
 import com.thermaloverlay.overlay.metrics.CpuCyclesUtils
@@ -100,7 +101,15 @@ class FloatMonitor(private val mContext: Context) {
                 private fun onClick() {
                     try {
                         if (System.currentTimeMillis() - lastClickTime < 300) {
+                            // Remove the window immediately for a snappy
+                            // dismiss, then go through the service's own stop
+                            // path (same as MainActivity's Stop button) so
+                            // OverlayPrefs/isRunning actually get cleared.
+                            // hidePopupWindow() is idempotent, so the second
+                            // call made by OverlayService.onDestroy() a
+                            // moment later is a harmless no-op.
                             hidePopupWindow()
+                            mContext.stopService(Intent(mContext, OverlayService::class.java))
                         } else {
                             lastClickTime = System.currentTimeMillis()
                         }
