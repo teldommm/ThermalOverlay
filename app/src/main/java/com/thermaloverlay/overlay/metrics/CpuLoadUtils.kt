@@ -140,19 +140,22 @@ class CpuLoadUtils {
     // temp nodes. Empty results are not cached so a pre-root first tick
     // retries later.
     //
-    // Match is a case-insensitive "cpu" substring, not the literal "cpu-0"
-    // this used to be: a live device screenshot showed cpu_temp pinned at
-    // exactly 0.0 for an entire session (MAX/MIN/AVG all "0,0°C") while
-    // every other per-tick metric on the same session recorded fine —
-    // meaning the old pattern matched zero thermal zones on that device.
-    // Real zone-naming conventions vary a lot even within one vendor
-    // ("cpu-0-0-usr" vs "cpu0-0-bottom-thermal" vs "cpu0-thermal" vs
-    // "cpu-thermal0"), and the literal "cpu-0" (hyphen right after "cpu")
-    // only matches the first of those. Broadening to "cpu" catches all of
-    // them at the cost of also matching CPU-adjacent-but-not-strictly-core
-    // zones (e.g. a CPU BCL/throttle zone) — an over-broad match that still
-    // reports *something* is a better failure mode than the previous
-    // silent, permanent "--".
+    // Match is the literal substring "cpu-0" — NOT broadened to a bare "cpu"
+    // substring. That broadening was tried and reverted: the user confirmed
+    // both the temperature-monitor overlay and the main overlay already
+    // displayed a correct, live CPU temperature with this exact narrow
+    // pattern, before the broadening ever shipped — proving "cpu-0" was
+    // finding the right zone on that device all along. The real bug (fixed
+    // separately, see cpuTemperatureMilliDegrees()/getCpuTemperatureCelsius()
+    // below) was a locale round-trip in the numeric parse, not zone-matching.
+    // Broadening to "cpu" additionally matched a zone that reports a fixed
+    // value (constant 105° across every tick regardless of load) — almost
+    // certainly a static shutdown/critical trip-point threshold rather than
+    // a live sensor, common on Qualcomm SoCs — and since the max() across
+    // matches always prefers the higher reading, that static zone
+    // permanently masked the real one. Do not re-broaden this without
+    // first confirming (e.g. by listing the matched zone names on-device)
+    // that every match is actually a live temperature node.
     private var cpuTempPaths: List<String>? = null
 
     // Raw millidegrees, or null if unavailable/invalid — no locale-sensitive
@@ -162,7 +165,7 @@ class CpuLoadUtils {
         var paths = cpuTempPaths
         if (paths == null) {
             val out = KeepShellPublic.doCmdSync(
-                "grep -il 'cpu' /sys/class/thermal/thermal_zone*/type 2>/dev/null"
+                "grep -l 'cpu-0' /sys/class/thermal/thermal_zone*/type 2>/dev/null"
             ).trim()
             if (out.isNotEmpty() && out != "error") {
                 paths = out.split("\n")
@@ -193,9 +196,9 @@ class CpuLoadUtils {
     // every single time. The floating overlay never hit this because it
     // only displays the string — it never parses it back into a number.
     // Net effect: cpu_temp was never recorded on any comma-decimal-locale
-    // device, even once the "cpu" zone-matching fix (above) found the
-    // zone correctly. Fixed by giving numeric callers their own function
-    // that never touches a locale-formatted string.
+    // device, even though zone-matching itself (above) already found the
+    // right zone correctly. Fixed by giving numeric callers their own
+    // function that never touches a locale-formatted string.
     fun getCpuTemperatureCelsius(): Double? = cpuTemperatureMilliDegrees()?.let { it / 1000 }
 
     fun getCpuTemperatureText(): String {
