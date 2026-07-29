@@ -1,16 +1,28 @@
 /**
  * Session history + stats screen for the framerate recorder: lists past
- * recordings, shows max/min/avg FPS plus "smooth" (% of frames >=45fps) and
- * "fever" (% of samples with battery temp >46°C) ratios for the selected
- * session, and a chart with FPS on the left axis and a switchable right
- * axis (temperature/battery/CPU+GPU load).
+ * recordings; shows the Platform/Model/OS/Profile header row, max/min/avg/
+ * variance FPS, "smooth" (% of frames >=45fps) and 5%-low ratios; the main
+ * FPS chart (switchable right axis: temperature/battery%/CPU+GPU load,
+ * each with its own real color — TEMPERATURE #80FF7E00, LOAD's CPU%
+ * #80fc6bc5 / GPU% #8087d3ff, CAPACITY #8087d3ff) plus its static 4-swatch
+ * legend; JANK chart with a session-total JANK/BIG JANK row; frame time
+ * chart with a MAX line; per-core CPU load / per-cluster frequency
+ * (togglable with a time-at-frequency histogram) / per-core cycles+temp
+ * charts, each with a dynamic per-cluster legend built from
+ * CpuFrequencyUtils; GPU frequency+load with a static legend; DDR; Power/
+ * Battery Current (togglable, with a legend and MAX/MIN/AVG row that swap
+ * together); and CPU Temperature with its own MAX/MIN/AVG row.
  *
- * Notes: doesn't include a platform/phone/OS info row (that would need
- * icon assets not present here) or a search/keyword-highlight path in the
- * session list (nothing exposes a search box for it). Uses plain
- * findViewById + a styled Button instead of ViewBinding + a Material
- * FloatingActionButton, matching how the rest of ThermalOverlay's
- * activities are built.
+ * Known gaps: Profile (chart_mode) has no data source in our recorder and
+ * stays blank; the top summary card's single "MAX" temperature stat still
+ * reads the battery `temperature` column rather than `cpu_temp` (the
+ * per-chart CPU Temperature MAX/MIN/AVG row is correct); CpuLoadsView's
+ * optional "Total" line itself isn't drawn (off by the source's own
+ * default) even though its legend swatch is shown, matching the source.
+ * Doesn't include a search/keyword-highlight path in the session list
+ * (nothing exposes a search box for it). Uses plain findViewById + a
+ * styled Button instead of ViewBinding + a Material FloatingActionButton,
+ * matching how the rest of ThermalOverlay's activities are built.
  */
 package com.thermaloverlay.overlay.activities
 
@@ -25,6 +37,7 @@ import android.os.Looper
 import android.provider.Settings
 import android.text.Spannable
 import android.text.SpannableString
+import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.view.View
@@ -39,6 +52,7 @@ import com.thermaloverlay.overlay.ForegroundAppService
 import com.thermaloverlay.overlay.OverlayPrefs
 import com.thermaloverlay.overlay.OverlayService
 import com.thermaloverlay.overlay.R
+import com.thermaloverlay.overlay.metrics.CpuFrequencyUtils
 import com.thermaloverlay.overlay.model.FpsWatchSession
 import com.thermaloverlay.overlay.store.FpsWatchStore
 import com.thermaloverlay.overlay.ui.AdapterSessions
@@ -79,15 +93,29 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
     private lateinit var frameTimeView: SessionJankChartView
     private lateinit var frameTimeMax: TextView
     private lateinit var coreLoadsView: SessionMultiLineChartView
+    private lateinit var coreLoadsLegend: TextView
     private lateinit var clusterFreqTitle: TextView
     private lateinit var clusterFreqView: SessionMultiLineChartView
     private lateinit var clusterFreqStatView: CpuFrequencyStatView
+    private lateinit var clusterFreqLegend: TextView
     private lateinit var coreCyclesView: SessionMultiLineChartView
+    private lateinit var coreCyclesLegend: TextView
     private lateinit var gpuLoadView: SessionLineChartView
     private lateinit var ddrView: SessionLineChartView
     private lateinit var powerToggleTitle: TextView
     private lateinit var powerView: SessionLineChartView
+    private lateinit var powerLegendLeft: TextView
+    private lateinit var powerMaxRow: TextView
+    private lateinit var powerMinRow: TextView
+    private lateinit var powerAvgRow: TextView
     private lateinit var cpuTempView: SessionLineChartView
+    private lateinit var cpuTempMaxRow: TextView
+    private lateinit var cpuTempMinRow: TextView
+    private lateinit var cpuTempAvgRow: TextView
+    private lateinit var jankTotal: TextView
+    private lateinit var bigJankTotal: TextView
+
+    private val cpuFrequencyUtils = CpuFrequencyUtils()
 
     // Real app toggles CpuFrequencyView<->CpuFrequencyStat and
     // PowerView<->BatteryIOView in place via a tap; tracked here since we
@@ -97,6 +125,7 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
     private var showingBatteryCurrent = false
 
     private var adapter: AdapterSessions? = null
+    private var currentSessionId: Long = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
@@ -130,15 +159,38 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         frameTimeView = findViewById<SessionJankChartView>(R.id.chart_frame_time_view).apply { kind = SessionJankChartView.Kind.FRAME_TIME }
         frameTimeMax = findViewById(R.id.chart_frame_time_max)
         coreLoadsView = findViewById<SessionMultiLineChartView>(R.id.chart_core_loads_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_LOADS }
+        coreLoadsLegend = findViewById(R.id.chart_core_loads_legend)
         clusterFreqTitle = findViewById(R.id.chart_cluster_freq_title)
         clusterFreqView = findViewById<SessionMultiLineChartView>(R.id.chart_cluster_freq_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CLUSTER_FREQ }
         clusterFreqStatView = findViewById(R.id.chart_cluster_freq_stat_view)
+        clusterFreqLegend = findViewById(R.id.chart_cluster_freq_legend)
         coreCyclesView = findViewById<SessionMultiLineChartView>(R.id.chart_core_cycles_view).apply { kind = SessionMultiLineChartView.Kind.CPU_CORE_CYCLES }
+        coreCyclesLegend = findViewById(R.id.chart_core_cycles_legend)
         gpuLoadView = findViewById<SessionLineChartView>(R.id.chart_gpu_load_view).apply { kind = SessionLineChartView.Kind.GPU_LOAD }
         ddrView = findViewById<SessionLineChartView>(R.id.chart_ddr_view).apply { kind = SessionLineChartView.Kind.DDR_FREQUENCY }
         powerToggleTitle = findViewById(R.id.chart_power_toggle_title)
         powerView = findViewById<SessionLineChartView>(R.id.chart_power_view).apply { kind = SessionLineChartView.Kind.POWER }
+        powerLegendLeft = findViewById(R.id.chart_power_legend_left)
+        powerMaxRow = findViewById(R.id.chart_power_max)
+        powerMinRow = findViewById(R.id.chart_power_min)
+        powerAvgRow = findViewById(R.id.chart_power_avg_row)
         cpuTempView = findViewById<SessionLineChartView>(R.id.chart_cpu_temp_view).apply { kind = SessionLineChartView.Kind.CPU_TEMPERATURE }
+        cpuTempMaxRow = findViewById(R.id.chart_cpu_temp_max_row)
+        cpuTempMinRow = findViewById(R.id.chart_cpu_temp_min)
+        cpuTempAvgRow = findViewById(R.id.chart_cpu_temp_avg)
+        jankTotal = findViewById(R.id.chart_jank_total)
+        bigJankTotal = findViewById(R.id.chart_big_jank_total)
+
+        // Device topology, not session data — build once. Matches real
+        // ActivityFpsSession.r(): "■ Total  " (CpuLoadsView.getMainColor(),
+        // #87d3ff) then one "■ CPU first~last  " swatch per cluster for the
+        // loads legend; the same per-cluster swatches (no Total) for the
+        // frequency legend; and the loads' per-cluster swatches again plus
+        // a trailing "■ TEMP(℃)" for the cycles legend.
+        val clusterLabels = buildClusterLabels()
+        coreLoadsLegend.text = buildLegend(listOf("\u25a0 Total  " to Color.parseColor("#87d3ff")) + clusterLabels)
+        clusterFreqLegend.text = buildLegend(clusterLabels)
+        coreCyclesLegend.text = buildLegend(clusterLabels + listOf("\u25a0 TEMP(\u2103)" to Color.parseColor("#87d3ff")))
 
         sessionsList.layoutManager = LinearLayoutManager(this)
 
@@ -234,6 +286,28 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         }
     }
 
+    // Real format per cluster: "■ CPU {first}~{last}  " for multi-core
+    // clusters, "■ CPU {only}  " for single-core ones — matches
+    // ActivityFpsSession.r()'s v42.n(strArr)/v42.z(strArr) (first/last).
+    private fun buildClusterLabels(): List<Pair<String, Int>> {
+        val clusters = cpuFrequencyUtils.getClusterInfo()
+        val colors = cpuFrequencyUtils.getClusterColors()
+        return clusters.mapIndexed { index, cluster ->
+            val label = if (cluster.size > 1) "\u25a0 CPU ${cluster.first()}~${cluster.last()}  " else "\u25a0 CPU ${cluster.firstOrNull() ?: ""}  "
+            label to colors.getOrElse(index) { colors.lastOrNull() ?: Color.parseColor("#87d3ff") }
+        }
+    }
+
+    private fun buildLegend(parts: List<Pair<String, Int>>): SpannableStringBuilder {
+        val builder = SpannableStringBuilder()
+        for ((text, color) in parts) {
+            val start = builder.length
+            builder.append(text)
+            builder.setSpan(ForegroundColorSpan(color), start, builder.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return builder
+    }
+
     // Matches real cpu_freq_stat: swaps the CPU_CLUSTER_FREQ line chart for
     // the CpuFrequencyStatView histogram in place. Real app keeps the same
     // static title for both states, so only visibility toggles here.
@@ -245,13 +319,34 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
 
     // Matches real chart_toggle_w: swaps Power(W) for Battery Current(mA)
     // in place. Unlike the frequency toggle, the real app's title text
-    // also changes between the two states (chart_toggle_w_text).
+    // also changes between the two states (chart_toggle_w_text), and so do
+    // the legend's left swatch and the MAX/MIN/AVG row's unit/values.
     private fun onPowerToggleClicked() {
         showingBatteryCurrent = !showingBatteryCurrent
         powerView.kind = if (showingBatteryCurrent) SessionLineChartView.Kind.BATTERY_CURRENT else SessionLineChartView.Kind.POWER
         powerToggleTitle.text = getString(
             if (showingBatteryCurrent) R.string.fps_chart_section_battery_current else R.string.fps_chart_section_power
         )
+        updatePowerLegendAndStats(currentSessionId)
+    }
+
+    private fun updatePowerLegendAndStats(sessionId: Long) {
+        if (sessionId < 1) return
+        // Real legend: BatteryIOView's "■ Current(mA)" is #1474e4, PowerView's
+        // "■ Power(W)" is also #1474e4 — only the label text changes, not the
+        // color, in both chart_battery_legend and chart_power_legend.
+        powerLegendLeft.text = if (showingBatteryCurrent) "\u25a0 Current(mA)" else "\u25a0 Power(W)"
+        if (showingBatteryCurrent) {
+            powerMaxRow.text = String.format("%dmA", fpsWatchStore.sessionMaxCurrent(sessionId).toInt())
+            powerMinRow.text = String.format("%dmA", fpsWatchStore.sessionMinCurrent(sessionId).toInt())
+            val currentSamples = fpsWatchStore.sessionCurrentData(sessionId)
+            val avgCurrent = if (currentSamples.isEmpty()) 0 else currentSamples.average().toInt()
+            powerAvgRow.text = String.format("%dmA", avgCurrent)
+        } else {
+            powerMaxRow.text = String.format("%.2fW", fpsWatchStore.sessionMaxPower(sessionId))
+            powerMinRow.text = String.format("%.2fW", fpsWatchStore.sessionMinPower(sessionId))
+            powerAvgRow.text = String.format("%.2fW", fpsWatchStore.sessionAvgPower(sessionId))
+        }
     }
 
     private fun onRightDimensionClicked() {
@@ -346,6 +441,7 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         val fpsData = fpsWatchStore.sessionFpsData(sessionId)
         val temperatureData = fpsWatchStore.sessionTemperatureData(sessionId)
         if (fpsData.isEmpty()) return
+        currentSessionId = sessionId
 
         val smooth = fpsData.count { it >= 45 } * 100.0 / fpsData.size
 
@@ -389,5 +485,19 @@ class ActivityFpsChart : AppCompatActivity(), AdapterSessions.OnItemClickListene
         val frameTimeData = fpsWatchStore.sessionFrameTimeData(sessionId)
         val maxFrameTime = frameTimeData.maxOrNull() ?: 0f
         frameTimeMax.text = "MAX: ${maxFrameTime.toInt()}ms"
+
+        // Session-total jank/big-jank counts (sum, not per-tick average).
+        jankTotal.text = fpsWatchStore.sessionTotalJank(sessionId).toInt().toString()
+        bigJankTotal.text = fpsWatchStore.sessionTotalBigJank(sessionId).toInt().toString()
+
+        // CPU-temperature-specific MAX/MIN/AVG under its own chart (distinct
+        // from the top summary card's MAX, which — matching an existing,
+        // already-flagged gap — still reads the `temperature` (battery)
+        // column rather than `cpu_temp`).
+        cpuTempMaxRow.text = String.format("%.1f\u2103", fpsWatchStore.sessionMaxCpuTemp(sessionId))
+        cpuTempMinRow.text = String.format("%.1f\u2103", fpsWatchStore.sessionMinCpuTemp(sessionId))
+        cpuTempAvgRow.text = String.format("%.1f\u2103", fpsWatchStore.sessionAvgCpuTemp(sessionId))
+
+        updatePowerLegendAndStats(sessionId)
     }
 }

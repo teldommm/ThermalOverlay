@@ -226,9 +226,18 @@ class FpsDataView : View {
                     val (minY, maxY, keys) = temperatureScale(samples, fpsKeys.size)
                     val dataMin = samples.minOrNull()!!
                     val dataMax = samples.maxOrNull()!!
+                    // Real h(): getColorAccent() is set then immediately
+                    // overridden to #80FF7E00 right before the line is
+                    // drawn (same "set-then-override" pattern as the
+                    // 8f->4f stroke-width trick elsewhere) — #80FF7E00 is
+                    // what actually renders, matching the legend's own
+                    // "■ TEMP(℃)" color exactly. This was wrongly #8087d3ff
+                    // here before (that color belongs to CAPACITY, see
+                    // below — an earlier session mixed up which of f()/g()/
+                    // h() was which dimension).
                     drawSeries(
                         canvas, samples, maxY, keys, axisOnRight = true,
-                        lineColor = Color.parseColor("#8087d3ff"), gridColor = Color.parseColor("#4087d3ff"),
+                        lineColor = Color.parseColor("#80FF7E00"), gridColor = Color.parseColor("#4087d3ff"),
                         zeroLineColor = null, innerPadding, paddingTop, textSize,
                         minY = minY, dataRange = dataMin to dataMax
                     )
@@ -237,8 +246,16 @@ class FpsDataView : View {
             Dimension.CAPACITY -> {
                 val samples = store.sessionCapacityData(sessionId)
                 if (samples.isNotEmpty()) {
+                    // This tier-dependent key set (sparse {25,50,75,100} vs
+                    // dense {20,40,60,80,100}) belongs to CAPACITY (real
+                    // f(canvas,i)), not LOAD — confirmed by re-reading f()'s
+                    // actual body: it reads py0.w() (capacity) and is the
+                    // ONLY one of the three right-dimension functions that
+                    // takes the FPS tier's key-count `i` as a parameter.
+                    val capacityKeys = if (fpsKeys.size == 4 || fpsKeys.size == 5)
+                        listOf(25, 50, 75, 100) else listOf(20, 40, 60, 80, 100)
                     drawSeries(
-                        canvas, samples, 100, listOf(25, 50, 75, 90, 100), axisOnRight = true,
+                        canvas, samples, 100, capacityKeys, axisOnRight = true,
                         lineColor = Color.parseColor("#8087d3ff"), gridColor = Color.parseColor("#4087d3ff"),
                         zeroLineColor = null, innerPadding, paddingTop, textSize
                     )
@@ -248,15 +265,11 @@ class FpsDataView : View {
                 val cpuSamples = store.sessionCpuLoadData(sessionId)
                 val gpuSamples = store.sessionGpuLoadData(sessionId)
                 if (cpuSamples.isNotEmpty() && gpuSamples.isNotEmpty()) {
-                    // Source's key set varies with which FPS-axis tier is
-                    // active: the FPS scale's own gridline count is 4 or 5
-                    // for its two lowest tiers (<=62, <=92) — in exactly
-                    // those cases LOAD uses the sparser {25,50,75,100};
-                    // every higher FPS tier (key count 6 or 7) uses the
-                    // denser {20,40,60,80,100}. Confirmed directly from
-                    // FpsDataView.f(): `i==5 || i==4 -> sparse`.
-                    val loadKeys = if (fpsKeys.size == 4 || fpsKeys.size == 5)
-                        listOf(25, 50, 75, 100) else listOf(20, 40, 60, 80, 100)
+                    // Real g(canvas) takes NO tier parameter at all and
+                    // always uses this fixed key set — LOAD's keys are NOT
+                    // tier-dependent (that was CAPACITY's behavior,
+                    // mistakenly attributed to LOAD before).
+                    val loadKeys = listOf(25, 50, 75, 90, 100)
                     drawSeries(
                         canvas, cpuSamples, 100, loadKeys, axisOnRight = true,
                         lineColor = Color.parseColor("#80fc6bc5"), gridColor = Color.parseColor("#4087d3ff"),

@@ -293,6 +293,20 @@
                 android:layout_width="match_parent"
                 android:layout_height="220dp" />
 
+            <!-- Scene's FPS legend is static — always shows all 4 possible
+                 series regardless of which right-dimension is currently
+                 toggled on the chart itself. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="4dp">
+                <TextView android:text="\u25a0 FPS" android:textSize="12sp" android:textColor="@android:color/darker_gray" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView android:text="\u25a0 TEMP(\u2103)" android:textSize="12sp" android:textColor="#80ff7e00" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
+                <TextView android:text="\u25a0 CPU(%)" android:textSize="12sp" android:textColor="#80fc6bc5" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
+                <TextView android:text="\u25a0 GPU(%)" android:textSize="12sp" android:textColor="#87d3ff" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
+            </LinearLayout>
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -305,6 +319,18 @@
                 android:id="@+id/chart_jank_view"
                 android:layout_width="match_parent"
                 android:layout_height="140dp" />
+            <!-- Scene shows session-total counts here (sum(jank)/sum(big_jank)),
+                 not per-tick averages. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="4dp">
+                <TextView android:text="JANK:" android:textSize="11sp" android:textColor="#87d3ff" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/chart_jank_total" android:textSize="11sp" android:textColor="#87d3ff" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" />
+                <TextView android:text="BIG JANK:" android:textSize="11sp" android:textColor="#80fc6bc5" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="24dp" />
+                <TextView android:id="@+id/chart_big_jank_total" android:textSize="11sp" android:textColor="#80fc6bc5" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" />
+            </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
@@ -341,6 +367,17 @@
                 android:id="@+id/chart_core_loads_view"
                 android:layout_width="match_parent"
                 android:layout_height="160dp" />
+            <!-- Populated in Kotlin from CpuFrequencyUtils.getClusterInfo() —
+                 device-specific per-cluster core ranges, colored to match
+                 each cluster's line, plus the "Total" swatch (always shown
+                 even though we don't draw that line, matching the source). -->
+            <TextView
+                android:id="@+id/chart_core_loads_legend"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="4dp"
+                android:textSize="12sp" />
 
             <TextView
                 android:id="@+id/chart_cluster_freq_title"
@@ -364,6 +401,13 @@
                 android:visibility="gone"
                 android:layout_width="match_parent"
                 android:layout_height="160dp" />
+            <TextView
+                android:id="@+id/chart_cluster_freq_legend"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="4dp"
+                android:textSize="12sp" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -377,6 +421,15 @@
                 android:id="@+id/chart_core_cycles_view"
                 android:layout_width="match_parent"
                 android:layout_height="160dp" />
+            <!-- Same per-cluster labels as chart_core_loads_legend, plus a
+                 trailing TEMP(℃) swatch for the dual-axis temperature line. -->
+            <TextView
+                android:id="@+id/chart_core_cycles_legend"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="4dp"
+                android:textSize="11sp" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -390,6 +443,14 @@
                 android:id="@+id/chart_gpu_load_view"
                 android:layout_width="match_parent"
                 android:layout_height="140dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="4dp">
+                <TextView android:text="\u25a0 Frequency(MHz)" android:textSize="12sp" android:textColor="#87d3ff" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView android:text="\u25a0 Usage(%)" android:textSize="12sp" android:textColor="#1474e4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
+            </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
@@ -424,6 +485,30 @@
                 android:id="@+id/chart_power_view"
                 android:layout_width="match_parent"
                 android:layout_height="140dp" />
+            <!-- Legend + MAX/MIN/AVG both swap with the toggle above (real
+                 app: chart_battery_legend vs chart_power_legend,
+                 battery_io_max/min/avg vs power_max/min/avg) — populated in
+                 Kotlin since which set applies depends on showingBatteryCurrent. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="4dp">
+                <TextView android:id="@+id/chart_power_legend_left" android:textSize="12sp" android:textColor="#1474e4" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/chart_power_legend_right" android:text="\u25a0 Capacity(%)" android:textSize="12sp" android:textColor="#87d3ff" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
+            </LinearLayout>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="8dp">
+                <TextView android:text="MAX:" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/chart_power_max" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" />
+                <TextView android:text="MIN:" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="16dp" />
+                <TextView android:id="@+id/chart_power_min" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" />
+                <TextView android:text="AVG:" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="16dp" />
+                <TextView android:id="@+id/chart_power_avg_row" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" />
+            </LinearLayout>
 
             <!-- Scene puts CPU Temperature last, after Power/Battery Current
                  (chart_cpu_t is the final BlurViewRelativeLayout card in
@@ -440,6 +525,18 @@
                 android:id="@+id/chart_cpu_temp_view"
                 android:layout_width="match_parent"
                 android:layout_height="140dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:layout_marginTop="8dp">
+                <TextView android:text="MAX:" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/chart_cpu_temp_max_row" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" />
+                <TextView android:text="MIN:" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="16dp" />
+                <TextView android:id="@+id/chart_cpu_temp_min" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" />
+                <TextView android:text="AVG:" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="16dp" />
+                <TextView android:id="@+id/chart_cpu_temp_avg" android:textSize="11sp" android:textColor="#a0808080" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

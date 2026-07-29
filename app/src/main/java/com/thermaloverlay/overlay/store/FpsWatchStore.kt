@@ -288,10 +288,32 @@ class FpsWatchStore(context: Context) : SQLiteOpenHelper(context, "fps_watch_log
     // Max CPU temperature — Scene's `select max(cpu_temperature)`.
     fun sessionMaxCpuTemp(sessionId: Long) =
         scalar("select max(cpu_temp) from fps_history where session = ?", sessionId)
+    fun sessionMinCpuTemp(sessionId: Long) =
+        scalar("select min(cpu_temp) from fps_history where session = ?", sessionId)
+    fun sessionAvgCpuTemp(sessionId: Long) =
+        scalar("select avg(cpu_temp) from fps_history where session = ?", sessionId)
 
     // Average power in watts — Scene's `select avg(bat_current * voltage) / 1000`.
     fun sessionAvgPower(sessionId: Long) =
         scalar("select avg(current_ma * voltage) / 1000 from fps_history where session = ?", sessionId)
+    fun sessionMaxPower(sessionId: Long) =
+        scalar("select max(current_ma * voltage) / 1000 from fps_history where session = ?", sessionId)
+    fun sessionMinPower(sessionId: Long) =
+        scalar("select min(current_ma * voltage) / 1000 from fps_history where session = ?", sessionId)
+
+    // Battery current (mA) min/max — Scene's BatteryIOView legend row, raw
+    // current_ma (not multiplied by voltage, unlike power above).
+    fun sessionMaxCurrent(sessionId: Long) =
+        scalar("select max(current_ma) from fps_history where session = ?", sessionId)
+    fun sessionMinCurrent(sessionId: Long) =
+        scalar("select min(current_ma) from fps_history where session = ?", sessionId)
+
+    // Session-total jank/big-jank counts — Scene's `select sum(jank)` /
+    // `select sum(big_jank)`, not per-tick averages.
+    fun sessionTotalJank(sessionId: Long) =
+        scalar("select sum(jank_count) from fps_history where session = ?", sessionId)
+    fun sessionTotalBigJank(sessionId: Long) =
+        scalar("select sum(big_jank_count) from fps_history where session = ?", sessionId)
 
     // FPS variance — sample variance of the fps column. Computed in Kotlin
     // (SQLite has no variance function) rather than guessed, so it matches a
