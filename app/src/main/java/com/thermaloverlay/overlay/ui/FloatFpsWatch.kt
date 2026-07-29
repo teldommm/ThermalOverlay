@@ -299,7 +299,12 @@ class FloatFpsWatch(private val mContext: Context) {
             // Only gathered while actually recording — these aren't needed
             // for the live pill, and several involve shell calls (DDR/cycles)
             // that would be wasted overhead on every idle tick otherwise.
-            val cpuTemp = cpuLoadUtils.getCpuTemperatureText().removeSuffix("°C").toDoubleOrNull()
+            // Was: cpuLoadUtils.getCpuTemperatureText().removeSuffix("°C").toDoubleOrNull()
+            // — getCpuTemperatureText() formats with the device's default
+            // locale, so on any comma-decimal locale this always returned
+            // null (toDoubleOrNull() requires a period). getCpuTemperatureCelsius()
+            // returns the raw number with no locale round-trip.
+            val cpuTemp = cpuLoadUtils.getCpuTemperatureCelsius()
             val ddrFreq = cpuFrequencyUtils.getDdrFrequency().toIntOrNull()
             val coreCycles = CpuCyclesUtils.getPerCoreCyclesMhz()
             val clusterFreqs = (0 until cpuFrequencyUtils.getClusterInfo().size).map {

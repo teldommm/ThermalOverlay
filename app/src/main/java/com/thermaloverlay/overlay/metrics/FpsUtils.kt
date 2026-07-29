@@ -7,6 +7,7 @@ package com.thermaloverlay.overlay.metrics
 import com.thermaloverlay.overlay.shell.KeepShell
 import com.thermaloverlay.overlay.shell.KeepShellPublic
 import com.thermaloverlay.overlay.shell.RootFile
+import java.util.Locale
 
 class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepShell) {
     private var fpsFilePath: String? = null
@@ -19,10 +20,21 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
     private var lastTime = -1L
     private var lastFrames = -1
 
+    // Locale.US forced on every String.format below: this value gets parsed
+    // straight back into a Float by the fps getter just below
+    // (fpsStr.toFloat()), which — like Kotlin's toFloat()/toFloatOrNull()
+    // everywhere — always requires a period regardless of device locale.
+    // Found via the same bug in CpuLoadUtils.getCpuTemperatureText(): on a
+    // comma-decimal locale, an unqualified "%.1f" silently produced a comma
+    // and the reparse threw, falling through to the `1f` fallback below —
+    // meaning FPS would have been pinned at 1.0 forever on that locale
+    // whenever this gfxinfo/fpsgo path is the one in use (the raw shell-cat
+    // paths a few lines down were never affected, since they just relay
+    // whatever the kernel node already contains, unformatted by us).
     val currentFps: String?
         get() {
             gfxInfoFpsUtils.getFps()?.let {
-                return String.format("%.1f", it)
+                return String.format(Locale.US, "%.1f", it)
             }
 
             if (!fpsFilePath.isNullOrEmpty()) {
@@ -32,7 +44,7 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
             }
 
             readFpsgoStatusFps()?.let {
-                return String.format("%.1f", it)
+                return String.format(Locale.US, "%.1f", it)
             }
 
             if (fpsCommand2.isNotEmpty()) {
@@ -50,7 +62,7 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
                         }
                         lastFrames = frames
                         lastTime = time
-                        return String.format("%.1f", fps)
+                        return String.format(Locale.US, "%.1f", fps)
                     } catch (ex: Exception) {
                         if (!(lastTime > 0 && lastFrames > 0)) {
                             fpsCommand2 = ""

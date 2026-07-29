@@ -139,13 +139,30 @@ class CpuLoadUtils {
     // files on modern phones). After the first pass we only cat the matching
     // temp nodes. Empty results are not cached so a pre-root first tick
     // retries later.
+    //
+    // Match is a case-insensitive "cpu" substring, not the literal "cpu-0"
+    // this used to be: a live device screenshot showed cpu_temp pinned at
+    // exactly 0.0 for an entire session (MAX/MIN/AVG all "0,0°C") while
+    // every other per-tick metric on the same session recorded fine —
+    // meaning the old pattern matched zero thermal zones on that device.
+    // Real zone-naming conventions vary a lot even within one vendor
+    // ("cpu-0-0-usr" vs "cpu0-0-bottom-thermal" vs "cpu0-thermal" vs
+    // "cpu-thermal0"), and the literal "cpu-0" (hyphen right after "cpu")
+    // only matches the first of those. Broadening to "cpu" catches all of
+    // them at the cost of also matching CPU-adjacent-but-not-strictly-core
+    // zones (e.g. a CPU BCL/throttle zone) — an over-broad match that still
+    // reports *something* is a better failure mode than the previous
+    // silent, permanent "--".
     private var cpuTempPaths: List<String>? = null
 
-    fun getCpuTemperatureText(): String {
+    // Raw millidegrees, or null if unavailable/invalid — no locale-sensitive
+    // formatting anywhere near this path. Shared by getCpuTemperatureText()
+    // (display) and getCpuTemperatureCelsius() (everyone else).
+    private fun cpuTemperatureMilliDegrees(): Double? {
         var paths = cpuTempPaths
         if (paths == null) {
             val out = KeepShellPublic.doCmdSync(
-                "grep -l 'cpu-0' /sys/class/thermal/thermal_zone*/type 2>/dev/null"
+                "grep -il 'cpu' /sys/class/thermal/thermal_zone*/type 2>/dev/null"
             ).trim()
             if (out.isNotEmpty() && out != "error") {
                 paths = out.split("\n")
@@ -155,14 +172,34 @@ class CpuLoadUtils {
                 if (paths.isNotEmpty()) cpuTempPaths = paths
             }
         }
-        if (paths.isNullOrEmpty()) return "--"
+        if (paths.isNullOrEmpty()) return null
 
         val raw = KeepShellPublic.doCmdSync("cat ${paths.joinToString(" ")} 2>/dev/null").trim()
-        if (raw.isEmpty() || raw == "error") return "--"
-        val maxMilli = raw.split("\n").mapNotNull { it.trim().toDoubleOrNull() }.maxOrNull() ?: return "--"
+        if (raw.isEmpty() || raw == "error") return null
+        val maxMilli = raw.split("\n").mapNotNull { it.trim().toDoubleOrNull() }.maxOrNull() ?: return null
         // Same semantics as the old awk: values are millidegrees; anything
         // <= 1000 is treated as invalid.
-        if (maxMilli <= 1000) return "--"
-        return String.format("%.1f°C", maxMilli / 1000)
+        if (maxMilli <= 1000) return null
+        return maxMilli
+    }
+
+    // Real bug found via a live device: this used to be the ONLY way to get
+    // the temperature, and every caller that needed a number (FloatFpsWatch)
+    // parsed it back with removeSuffix("°C").toDoubleOrNull(). But
+    // String.format("%.1f°C", x) here uses the device's default locale — on
+    // any comma-decimal locale (the device in question renders numbers as
+    // "0,0°C") it produces a comma, and Kotlin's toDoubleOrNull() always
+    // requires a period regardless of locale, so the parse silently failed
+    // every single time. The floating overlay never hit this because it
+    // only displays the string — it never parses it back into a number.
+    // Net effect: cpu_temp was never recorded on any comma-decimal-locale
+    // device, even once the "cpu" zone-matching fix (above) found the
+    // zone correctly. Fixed by giving numeric callers their own function
+    // that never touches a locale-formatted string.
+    fun getCpuTemperatureCelsius(): Double? = cpuTemperatureMilliDegrees()?.let { it / 1000 }
+
+    fun getCpuTemperatureText(): String {
+        val milli = cpuTemperatureMilliDegrees() ?: return "--"
+        return String.format("%.1f°C", milli / 1000)
     }
 }
