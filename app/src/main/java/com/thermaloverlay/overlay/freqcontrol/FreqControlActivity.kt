@@ -312,6 +312,16 @@ class FreqControlActivity : AppCompatActivity() {
     ) {
         private var lastApplied = initialChecked
 
+        // Bumped on every manual toggle. The periodic poll (refreshLiveStateAsync)
+        // reads this node on a background thread that can take a while (many
+        // sequential root-shell round trips ahead of this field), so its result
+        // may reflect the state from *before* a manual write. It captures the
+        // epoch right before issuing its own read (see currentEpoch()) and must
+        // pass that same value back into applyRealValue; if a manual write
+        // started in between, the epoch will have moved and the stale poll
+        // result is dropped instead of snapping the switch back.
+        @Volatile private var epoch = 0
+
         init {
             switch.isChecked = initialChecked
             installListener()
@@ -320,17 +330,21 @@ class FreqControlActivity : AppCompatActivity() {
         private fun installListener() {
             switch.setOnCheckedChangeListener { _, checked ->
                 if (checked == lastApplied) return@setOnCheckedChangeListener
+                val myEpoch = ++epoch
                 writeInBackground(
                     action = { write(checked) },
                     afterWrite = {
                         val real = readBack()
-                        mainHandler.post { applyRealValue(real) }
+                        mainHandler.post { applyRealValue(real, myEpoch) }
                     },
                 )
             }
         }
 
-        fun applyRealValue(value: Boolean) {
+        fun currentEpoch(): Int = epoch
+
+        fun applyRealValue(value: Boolean, observedEpoch: Int = epoch) {
+            if (observedEpoch != epoch) return
             lastApplied = value
             if (switch.isChecked != value) {
                 switch.setOnCheckedChangeListener(null)
@@ -684,8 +698,9 @@ class FreqControlActivity : AppCompatActivity() {
         val maxPwrlevel: Int?,
         val defaultPwrlevel: Int?,
         val throttling: Boolean,
+        val throttlingEpoch: Int,
     )
-    private data class CpuBoostLiveRead(val inputBoostMs: Int?, val schedBoostEnabled: Boolean)
+    private data class CpuBoostLiveRead(val inputBoostMs: Int?, val schedBoostEnabled: Boolean, val schedBoostEpoch: Int)
 
     private fun refreshLiveStateAsync() {
         if (clusterHolders.isEmpty() && gpuRoot == null && cpuBoostRoot == null && coreRoot == null) {
@@ -712,12 +727,14 @@ class FreqControlActivity : AppCompatActivity() {
                     minPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.MIN_PWRLEVEL),
                     maxPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.MAX_PWRLEVEL),
                     defaultPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.DEFAULT_PWRLEVEL),
+                    throttlingEpoch = gpuThrottlingController?.currentEpoch() ?: 0,
                     throttling = FreqControlUtils.readThrottlingEnabled(),
                 )
             } else null
             val cpuBoostRead = if (cpuBoostRoot != null) {
                 CpuBoostLiveRead(
                     inputBoostMs = FreqControlUtils.readIntNode(FreqControlUtils.CPU_INPUT_BOOST_MS),
+                    schedBoostEpoch = cpuBoostSchedController?.currentEpoch() ?: 0,
                     schedBoostEnabled = FreqControlUtils.readCpuSchedBoostOnInputEnabled(),
                 )
             } else null
@@ -742,14 +759,14 @@ class FreqControlActivity : AppCompatActivity() {
                     if (g.minPwrlevel != null && g.maxPwrlevel != null && g.defaultPwrlevel != null) {
                         gpuPwrlevelApplyReal?.invoke(g.minPwrlevel, g.maxPwrlevel, g.defaultPwrlevel)
                     }
-                    gpuThrottlingController?.applyRealValue(g.throttling)
+                    gpuThrottlingController?.applyRealValue(g.throttling, g.throttlingEpoch)
                 }
                 cpuBoostRead?.let { b ->
 
                     cpuBoostInputEditRef?.let { edit ->
                         if (!edit.hasFocus()) edit.setText(b.inputBoostMs?.toString() ?: "")
                     }
-                    cpuBoostSchedController?.applyRealValue(b.schedBoostEnabled)
+                    cpuBoostSchedController?.applyRealValue(b.schedBoostEnabled, b.schedBoostEpoch)
                 }
                 coreRead?.let { applyCoreStates(it) }
 
