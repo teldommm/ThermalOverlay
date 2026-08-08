@@ -1,5 +1,7 @@
 # ThermalOverlay
 
+!!!in next update will be added all overlays and fps record from scene omera
+
 A floating performance HUD for rooted Android devices, plus a screen for
 tuning CPU cluster and GPU frequencies. Built with Kotlin and a small native
 JNI helper for hot-path sysfs reads.
