@@ -21,6 +21,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.Spannable
 import android.text.SpannableString
@@ -111,6 +112,27 @@ class FloatMonitor(private val context: Context) {
 
     private var defaultInfoMinWidth = 0
 
+    // The window starts fully transparent and is revealed by the first
+    // snapshot (or after REVEAL_FALLBACK_MS), so the user never sees the
+    // not-yet-filled first frame. Main thread only.
+    private var revealPending = false
+    private val revealRunnable = Runnable { revealIfPending() }
+
+    // Values the cheap "preview" text reuses while the HUD is compact, so the
+    // detailed view can show real numbers on the very frame it opens.
+    // Poller thread only.
+    private var cachedGmem: String? = null
+    private var cachedDdr: String = ""
+    private var cachedSwap = 0
+    private var cachedTemp = "--"
+    private var cacheAt = 0L
+
+    // Last shape written to the preferences (poller thread only).
+    private var savedShape = ""
+
+    /** The state the HUD was in before the tap that began a possible double tap. */
+    private var expandedBeforeTap = false
+
     private var executor: ScheduledExecutorService? = null
     private var tickFuture: ScheduledFuture<*>? = null
     private var screenReceiver: BroadcastReceiver? = null
@@ -149,6 +171,8 @@ class FloatMonitor(private val context: Context) {
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val view = inflateView()
         val storage = context.getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
+        // Invisible until the first snapshot has filled it in.
+        view.alpha = 0f
 
         val lp = LayoutParams().apply {
             type = WindowCompatHelper.overlayWindowType()
@@ -184,6 +208,23 @@ class FloatMonitor(private val context: Context) {
         shown = true
 
         view.setOnTouchListener(HudTouchListener(lp, storage))
+
+        // Restore the last mode (and the shape of the detailed text) before
+        // the first tick, so the HUD opens the way it was left.
+        restoreShape(storage)
+        lastDetails = null
+        if (storage.getBoolean(KEY_EXPANDED, false)) {
+            showOtherInfo = true
+            otherInfo?.let { tv ->
+                val text = buildPlaceholder()
+                tv.text = text
+                keepWidthMonotonic(text)
+            }
+            applyDetailedLayout()
+        }
+        revealPending = true
+        mainHandler.postDelayed(revealRunnable, REVEAL_FALLBACK_MS)
+
         // A saved position can be off-screen after a rotation / resolution
         // change; pull the window back as soon as it has a size.
         clampAfterLayout()
@@ -244,7 +285,10 @@ class FloatMonitor(private val context: Context) {
         }
         executor = null
         slowExecutor = null
+        // In memory only: the remembered mode stays in the preferences.
         showOtherInfo = false
+        mainHandler.removeCallbacks(revealRunnable)
+        revealPending = false
 
         try {
             rootView?.let { windowManager?.removeViewImmediate(it) }
@@ -319,9 +363,49 @@ class FloatMonitor(private val context: Context) {
             }
             applyDetailedLayout()
         }
+        saveExpanded(showOtherInfo)
         // Re-arm (with no initial delay) so fresh numbers arrive right away
         // and the interval matches the new mode.
         restartTicking()
+    }
+
+    private fun saveExpanded(expanded: Boolean) {
+        context.getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_EXPANDED, expanded).apply()
+    }
+
+    private fun revealIfPending() {
+        if (!revealPending) return
+        revealPending = false
+        mainHandler.removeCallbacks(revealRunnable)
+        rootView?.alpha = 1f
+    }
+
+    /** Remembers the CPU grouping and optional rows, so the next start has the final shape at once. */
+    private fun persistShape() {
+        val sig = layoutHint.joinToString(";") { it.joinToString(",") } +
+            "|" + (if (rowDdr) 1 else 0) + (if (rowGmem) 1 else 0) + (if (rowPwr) 1 else 0)
+        if (sig == savedShape) return
+        savedShape = sig
+        context.getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY_SHAPE, sig).apply()
+    }
+
+    /** Inverse of [persistShape]; the first tick replaces it with measured data anyway. */
+    private fun restoreShape(storage: android.content.SharedPreferences) {
+        val sig = storage.getString(KEY_SHAPE, null) ?: return
+        savedShape = sig
+        val parts = sig.split('|')
+        try {
+            layoutHint = parts[0].split(';').filter { it.isNotEmpty() }
+                .map { g -> g.split(',').map { it.toInt() } }
+            val rows = parts.getOrNull(1) ?: ""
+            rowDdr = rows.getOrNull(0) == '1'
+            rowGmem = rows.getOrNull(1) == '1'
+            rowPwr = rows.getOrNull(2) == '1'
+        } catch (ignored: Exception) {
+            layoutHint = emptyList()
+        }
     }
 
     /** Same rows and widths as [buildDetails], with "--" for every value. */
@@ -394,16 +478,24 @@ class FloatMonitor(private val context: Context) {
         }
     }
 
-    /** Poller thread. Result is discarded; it fills the one-time caches. */
+    private fun refreshDetailCache() {
+        cachedGmem = GpuUtils.getMemoryUsage()
+        cachedSwap = SwapUtils.getZramFillPercent()
+        cachedDdr = cpuFrequencyUtils.getDdrFrequency()
+        cachedTemp = cpuLoadUtils.getCpuTemperatureText()
+        cacheAt = SystemClock.elapsedRealtime()
+    }
+
+    /** Poller thread. Fills the one-time probes and the preview cache. */
     private fun prewarmDetails() {
         if (!shown) return
-        cpuLoadUtils.getCpuTemperatureText()
+        refreshDetailCache()
         // Rows that exist on this device are known before the first tap, so
         // the placeholder already contains them.
-        if (cpuFrequencyUtils.getDdrFrequency().isNotEmpty()) rowDdr = true
-        if (GpuUtils.getMemoryUsage() != null) rowGmem = true
+        if (cachedDdr.isNotEmpty()) rowDdr = true
+        if (cachedGmem != null) rowGmem = true
         if (computePowerText() != null) rowPwr = true
-        SwapUtils.getZramFillPercent()
+        persistShape()
     }
 
     private fun stopOverlay() {
@@ -433,9 +525,13 @@ class FloatMonitor(private val context: Context) {
         private fun onTap(now: Long) {
             if (lastTapAt != 0L && now - lastTapAt < DOUBLE_TAP_MS) {
                 lastTapAt = 0L
+                // The first tap of this double tap already switched the mode;
+                // closing must not leave that accidental switch remembered.
+                saveExpanded(expandedBeforeTap)
                 stopOverlay()
             } else {
                 lastTapAt = now
+                expandedBeforeTap = showOtherInfo
                 toggleMode()
             }
         }
@@ -647,12 +743,13 @@ class FloatMonitor(private val context: Context) {
 
         BatteryStatusReader.update(context)
 
-        val details = if (showOtherInfo) {
-            refreshSlowSources()
-            buildDetails(scan, clusterFreqs, loads)
-        } else {
-            null
-        }
+        // Detailed mode: the full text. Compact mode: a cheap preview built
+        // from cached values, so tapping to expand shows real numbers on the
+        // very first frame instead of dashes.
+        val detailed = showOtherInfo
+        if (detailed) refreshSlowSources()
+        val details = buildDetails(scan, clusterFreqs, loads, preview = !detailed)
+        persistShape()
 
         val snapshot = Snapshot(
             cpuLoad = Math.ceil(load?.total ?: 0.0).toInt().coerceIn(0, 100),
@@ -676,16 +773,23 @@ class FloatMonitor(private val context: Context) {
         scan: com.thermaloverlay.overlay.metrics.ClusterScan,
         clusterFreqs: List<Long>,
         loads: Map<Int, Double>,
+        preview: Boolean,
     ): CharSequence {
         activityManager.getMemoryInfo(memInfo)
-        // Read GPU memory only here: it's a shell call per tick and the value
-        // is not shown anywhere in compact mode.
-        val gpuMemoryUsage = GpuUtils.getMemoryUsage()
         val totalMem = (memInfo.totalMem / 1024 / 1024f).toInt()
         val availMem = (memInfo.availMem / 1024 / 1024f).toInt()
         val ramPercent = if (totalMem > 0) (totalMem - availMem) * 100 / totalMem else 0
-        val swapPercent = SwapUtils.getZramFillPercent()
-        val ddrFreq = cpuFrequencyUtils.getDdrFrequency()
+
+        // GPU memory, zram, DDR and temperature cost a file / shell read each.
+        // The full text reads them every tick; the compact-mode preview reuses
+        // the values from prewarmDetails() and refreshes them only every
+        // PREVIEW_REFRESH_MS, so the first compact tick (which reveals the
+        // window) stays as fast as before.
+        val now = SystemClock.elapsedRealtime()
+        if (!preview || (cacheAt != 0L && now - cacheAt > PREVIEW_REFRESH_MS)) refreshDetailCache()
+        val gpuMemoryUsage = cachedGmem
+        val swapPercent = cachedSwap
+        val ddrFreq = cachedDdr
 
         val b = SpannableStringBuilder()
         b.append(whiteBoldSpan("#RAM  ${pct(ramPercent)}  ${pct(swapPercent)}"))
@@ -703,12 +807,12 @@ class FloatMonitor(private val context: Context) {
             b.append("\n")
         }
 
-        b.append(whiteBoldSpan("#CPU  " + cpuLoadUtils.getCpuTemperatureText().padStart(6)))
+        b.append(whiteBoldSpan("#CPU  " + cachedTemp.padStart(6)))
         b.append("\n")
 
         // Only reads the latest value; the stream itself is started by the
         // slow-sources thread.
-        val perCoreCycles = CpuCyclesUtils.readLatest()
+        val perCoreCycles = if (preview) null else CpuCyclesUtils.readLatest()
 
         // CPUs that belong to no known policy (a fully offline cluster) get a
         // group of their own, so they are visible even before the kernel
@@ -745,7 +849,9 @@ class FloatMonitor(private val context: Context) {
                 val displayMhz = if (cyclesMhz != null && cyclesMhz > 0) {
                     cyclesMhz
                 } else {
-                    val khz = cpuFrequencyUtils.getCoreFrequencyKHz(core)
+                    // The preview has no per-core reads: it estimates from the
+                    // cluster frequency, which the tick has already sampled.
+                    val khz = if (preview) freqKhz else cpuFrequencyUtils.getCoreFrequencyKHz(core)
                     if (khz > 0) (khz / 1000).toInt() * coreLoad.toInt() / 100 else null
                 }
                 lines.append((if (displayMhz != null) "${displayMhz}M" else "--").padStart(5))
@@ -806,11 +912,16 @@ class FloatMonitor(private val context: Context) {
 
         // Compare against the live flag: the user may have switched back to
         // compact mode while this snapshot was being computed.
-        if (showOtherInfo && s.details != null) {
+        // The text is remembered in both modes (in compact mode it is the
+        // cheap preview), so opening the detailed view has real numbers ready.
+        if (s.details != null) {
             lastDetails = s.details
-            otherInfo?.text = s.details
-            keepWidthMonotonic(s.details)
+            if (showOtherInfo) {
+                otherInfo?.text = s.details
+                keepWidthMonotonic(s.details)
+            }
         }
+        revealIfPending()
     }
 
     private companion object {
@@ -822,5 +933,14 @@ class FloatMonitor(private val context: Context) {
 
         // Delay before the one-time detailed-view probes run in the background.
         const val PREWARM_DELAY_MS = 1500L
+
+        const val KEY_EXPANDED = "expanded"
+        const val KEY_SHAPE = "shape"
+
+        // The window stays transparent at most this long waiting for the first snapshot.
+        const val REVEAL_FALLBACK_MS = 1500L
+
+        // In compact mode the cached slow values of the preview are refreshed this often.
+        const val PREVIEW_REFRESH_MS = 10_000L
     }
 }

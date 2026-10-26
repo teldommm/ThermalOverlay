@@ -4,8 +4,8 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@drawable/bg_card"
-    android:padding="20dp"
-    android:layout_marginBottom="16dp">
+    android:padding="16dp"
+    android:layout_marginBottom="12dp">
 
     <TextView
         android:layout_width="match_parent"
@@ -39,19 +39,22 @@
             <EditText
                 android:id="@+id/edit_input_boost_ms"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:layout_marginEnd="8dp"
                 android:inputType="number"
                 android:textColor="@color/text_primary"
-                android:background="@drawable/bg_card"
-                android:padding="10dp" />
+                android:textSize="14sp"
+                android:background="@drawable/bg_input"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp" />
 
             <Button
                 android:id="@+id/button_apply_input_boost_ms"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:background="@drawable/bg_button_start"
+                android:stateListAnimator="@null"
                 android:textColor="#0a1f18"
                 android:textStyle="bold"
                 android:textAllCaps="false"
@@ -80,6 +83,8 @@
 
         <Switch
             android:id="@+id/switch_sched_boost_on_input"
+            android:thumbTint="@color/switch_thumb"
+            android:trackTint="@color/switch_track"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />
 

@@ -19,4 +19,5 @@
     <color name="popup_bg">#2b2b2b</color>
     <color name="accent_soft">#2602d98d</color>
     <color name="press_soft">#1fffffff</color>
+    <color name="card_stroke">#14ffffff</color>
 </resources>

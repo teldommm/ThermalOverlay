@@ -17,5 +17,17 @@
              when it is transparent/matching; we want exactly our colour. -->
         <item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>
         <item name="android:enforceStatusBarContrast" tools:targetApi="29">false</item>
+
+        <!-- Open dropdown lists: only the row's own rounded highlight is drawn. -->
+        <item name="dropDownListViewStyle">@style/Widget.ThermalOverlay.DropDownList</item>
+    </style>
+
+    <!-- The default list selector paints a square highlight over the pressed
+         row, on top of the rounded one from bg_spinner_item (two effects at
+         once). The rows draw their own state, so the selector is transparent. -->
+    <style name="Widget.ThermalOverlay.DropDownList" parent="Widget.AppCompat.ListView.DropDown">
+        <item name="android:listSelector">@android:color/transparent</item>
+        <item name="android:divider">@null</item>
+        <item name="android:dividerHeight">0dp</item>
     </style>
 </resources>

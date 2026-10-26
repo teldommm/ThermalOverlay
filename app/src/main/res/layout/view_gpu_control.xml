@@ -5,8 +5,8 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@drawable/bg_card"
-    android:padding="20dp"
-    android:layout_marginBottom="16dp">
+    android:padding="16dp"
+    android:layout_marginBottom="12dp">
 
     <TextView
         android:layout_width="match_parent"
@@ -137,6 +137,9 @@
         android:id="@+id/gpu_seekbar_default_pwrlevel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:progressTint="@color/accent"
+        android:progressBackgroundTint="@color/spinner_stroke"
+        android:thumbTint="@color/accent"
         android:layout_marginBottom="14dp" />
 
     <LinearLayout
@@ -155,6 +158,8 @@
 
         <Switch
             android:id="@+id/switch_gpu_throttling"
+            android:thumbTint="@color/switch_thumb"
+            android:trackTint="@color/switch_track"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />
 

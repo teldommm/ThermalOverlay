@@ -9,7 +9,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="16dp">
 
         <TextView
             android:layout_width="wrap_content"
@@ -35,8 +35,8 @@
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:background="@drawable/bg_warning"
-            android:padding="14dp"
-            android:layout_marginBottom="16dp"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp"
             android:visibility="gone">
 
             <TextView
@@ -62,8 +62,8 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:background="@drawable/bg_card"
-            android:padding="20dp"
-            android:layout_marginBottom="16dp">
+            android:padding="16dp"
+            android:layout_marginBottom="12dp">
 
             <TextView
                 android:id="@+id/status_text"
@@ -82,26 +82,28 @@
                 <Button
                     android:id="@+id/start_button"
                     android:layout_width="0dp"
-                    android:layout_height="48dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="10dp"
                     android:background="@drawable/bg_button_start"
                     android:textColor="#0a1f18"
                     android:textStyle="bold"
                     android:textAllCaps="false"
                     android:elevation="0dp"
+                    android:stateListAnimator="@null"
                     android:text="@string/start_overlay" />
 
                 <Button
                     android:id="@+id/stop_button"
                     android:layout_width="0dp"
-                    android:layout_height="48dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_button_stop"
                     android:textColor="#ffffff"
                     android:textStyle="bold"
                     android:textAllCaps="false"
                     android:elevation="0dp"
+                    android:stateListAnimator="@null"
                     android:text="@string/stop_overlay" />
 
             </LinearLayout>
@@ -112,7 +114,7 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:background="@drawable/bg_card"
-            android:padding="20dp">
+            android:padding="16dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -146,6 +148,8 @@
 
                 <Switch
                     android:id="@+id/dual_battery_switch"
+                    android:thumbTint="@color/switch_thumb"
+                    android:trackTint="@color/switch_track"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content" />
 
@@ -155,9 +159,10 @@
         <Button
             android:id="@+id/freq_control_button"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginTop="16dp"
-            android:background="@drawable/bg_card"
+            android:layout_height="44dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_card_clickable"
+            android:stateListAnimator="@null"
             android:textColor="@color/text_primary"
             android:textAllCaps="false"
             android:elevation="0dp"

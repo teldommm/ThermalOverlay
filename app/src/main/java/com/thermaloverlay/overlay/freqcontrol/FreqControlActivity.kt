@@ -599,7 +599,7 @@ class FreqControlActivity : AppCompatActivity() {
         coreViews.forEachIndexed { i, tv ->
             val on = states.getOrElse(i) { true }
             tv.setBackgroundResource(if (on) R.drawable.bg_core_on else R.drawable.bg_core_off)
-            tv.setTextColor(getColor(if (on) R.color.text_primary else R.color.text_secondary))
+            tv.setTextColor(getColor(if (on) R.color.accent else R.color.text_secondary))
         }
     }
 
