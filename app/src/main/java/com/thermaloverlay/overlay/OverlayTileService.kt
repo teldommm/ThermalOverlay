@@ -46,7 +46,7 @@ class OverlayTileService : TileService() {
         super.onClick()
 
         if (OverlayState.isRunning) {
-            stopService(Intent(this, OverlayService::class.java))
+            OverlayService.requestStop(this)
             updateTileState(false)
             return
         }

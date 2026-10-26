@@ -56,4 +56,23 @@ object RootState {
         }
         return Settings.canDrawOverlays(context)
     }
+
+    /**
+     * Asks the system to leave the app alone in the background: out of Doze /
+     * battery optimisation and allowed to run in the background. Root can set
+     * both directly. Blocking, never on the main thread. Idempotent; the
+     * caller remembers that it was done.
+     */
+    fun ensureBackgroundExemptions(context: Context) {
+        if (!isGranted) return
+        val pkg = context.packageName
+        try {
+            KeepShellPublic.doCmdSync(
+                "dumpsys deviceidle whitelist +$pkg >/dev/null 2>&1; " +
+                    "appops set $pkg RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1; " +
+                    "appops set $pkg RUN_IN_BACKGROUND allow >/dev/null 2>&1"
+            )
+        } catch (ignored: Exception) {
+        }
+    }
 }

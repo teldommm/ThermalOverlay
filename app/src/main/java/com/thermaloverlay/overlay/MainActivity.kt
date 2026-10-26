@@ -174,7 +174,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onStopClicked() {
-        stopService(Intent(this, OverlayService::class.java))
+        OverlayService.requestStop(this)
     }
 
     private fun refreshUi() {

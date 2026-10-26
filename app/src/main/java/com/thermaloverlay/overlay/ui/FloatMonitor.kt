@@ -501,7 +501,7 @@ class FloatMonitor(private val context: Context) {
     private fun stopOverlay() {
         // Same path as the Stop button / notification action, so the shared
         // state is cleaned up by OverlayService.onDestroy().
-        context.stopService(Intent(context, OverlayService::class.java))
+        OverlayService.requestStop(context)
     }
 
     // --- touch ---
