@@ -1,6 +1,10 @@
 /**
- * The floating HUD window: layout, drag handling, click-to-cycle, and periodic
+ * The floating HUD window: layout, drag handling, tap gestures, and periodic
  * metrics polling.
+ *
+ * Threading: all metric reads run on ONE single-thread executor, so two ticks
+ * can never overlap (re-arming the schedule just queues behind a running tick).
+ * Views are only touched on the main thread.
  */
 package com.thermaloverlay.overlay.ui
 
@@ -11,6 +15,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.PixelFormat
+import android.graphics.Point
+import android.graphics.Typeface
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
@@ -21,10 +27,13 @@ import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
 import android.widget.ImageView
@@ -41,170 +50,350 @@ import com.thermaloverlay.overlay.metrics.CpuLoadUtils
 import com.thermaloverlay.overlay.metrics.FpsUtils
 import com.thermaloverlay.overlay.metrics.GpuUtils
 import com.thermaloverlay.overlay.metrics.SwapUtils
+import com.thermaloverlay.overlay.shell.KeepShellPublic
 import com.thermaloverlay.overlay.utils.WindowCompatHelper
-import java.util.Timer
-import java.util.TimerTask
+import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
-class FloatMonitor(private val mContext: Context) {
+class FloatMonitor(private val context: Context) {
     private val cpuLoadUtils = CpuLoadUtils()
     private val cpuFrequencyUtils = CpuFrequencyUtils()
     private val fpsUtils = FpsUtils()
 
-    fun showPopupWindow(): Boolean {
-        if (show) return true
-        if (batteryManager == null) {
-            batteryManager = mContext.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(mContext)) {
-            Toast.makeText(mContext, mContext.getString(R.string.permission_float), Toast.LENGTH_LONG).show()
+    private var windowManager: WindowManager? = null
+    private var rootView: LinearLayout? = null
+    private var params: LayoutParams? = null
+
+    @Volatile
+    private var shown = false
+
+    @Volatile
+    private var showOtherInfo = false
+
+    private var executor: ScheduledExecutorService? = null
+    private var tickFuture: ScheduledFuture<*>? = null
+    private var screenReceiver: BroadcastReceiver? = null
+
+    // Views
+    private var cpuChart: FloatMonitorChartView? = null
+    private var cpuFreqText: TextView? = null
+    private var gpuChart: FloatMonitorChartView? = null
+    private var gpuFreqText: TextView? = null
+    private var batteryChart: FloatMonitorBatteryView? = null
+    private var batteryTempText: TextView? = null
+    private var batteryLevelText: TextView? = null
+    private var chargerView: ImageView? = null
+    private var otherInfo: TextView? = null
+    private var chartList: LinearLayout? = null
+
+    // Only touched from the executor thread.
+    private val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+    private val memInfo = ActivityManager.MemoryInfo()
+    private var coreCount = -1
+    private var lastOnlineCores: Set<Int>? = null
+
+    private val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+
+    // --- show / hide ---
+
+    @SuppressLint("ClickableViewAccessibility", "RtlHardcoded")
+    fun showPopupWindow(): Boolean {
+        if (shown) return true
+
+        if (!Settings.canDrawOverlays(context)) {
+            Toast.makeText(context, context.getString(R.string.permission_float), Toast.LENGTH_LONG).show()
             return false
         }
 
-        show = true
-        mWindowManager = mContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val view = inflateView()
+        val storage = context.getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
 
-        val view = setUpView(mContext)
-
-        val params = LayoutParams()
-        val monitorStorage = mContext.getSharedPreferences("float_monitor_storage", Context.MODE_PRIVATE)
-
-        params.type = WindowCompatHelper.overlayWindowType()
-        params.format = PixelFormat.TRANSLUCENT
-        params.width = LayoutParams.WRAP_CONTENT
-        params.height = LayoutParams.WRAP_CONTENT
-        params.gravity = Gravity.TOP or Gravity.LEFT
-        params.x = monitorStorage.getInt("x", 0)
-        params.y = monitorStorage.getInt("y", 0)
-
-        @Suppress("DEPRECATION")
-        params.flags = LayoutParams.FLAG_NOT_TOUCH_MODAL or LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_FULLSCREEN
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        val lp = LayoutParams().apply {
+            type = WindowCompatHelper.overlayWindowType()
+            format = PixelFormat.TRANSLUCENT
+            width = LayoutParams.WRAP_CONTENT
+            height = LayoutParams.WRAP_CONTENT
+            gravity = Gravity.TOP or Gravity.LEFT
+            x = storage.getInt("x", 0)
+            y = storage.getInt("y", 0)
+            @Suppress("DEPRECATION")
+            flags = LayoutParams.FLAG_NOT_TOUCH_MODAL or LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_FULLSCREEN
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
 
         try {
-            mWindowManager!!.addView(view, params)
-            mView = view
-
-            view.setOnTouchListener(object : View.OnTouchListener {
-                private var isTouchDown = false
-                private var touchStartRawX = 0f
-                private var touchStartRawY = 0f
-
-                private var paramStartX = 0
-                private var paramStartY = 0
-                private var touchStartTime = 0L
-                private var lastClickTime = 0L
-
-                private fun onClick() {
-                    try {
-                        if (System.currentTimeMillis() - lastClickTime < 300) {
-                            // Remove the window immediately for a snappy
-                            // dismiss, then go through the service's own stop
-                            // path (same as MainActivity's Stop button) so
-                            // OverlayPrefs/isRunning actually get cleared.
-                            // hidePopupWindow() is idempotent, so the second
-                            // call made by OverlayService.onDestroy() a
-                            // moment later is a harmless no-op.
-                            hidePopupWindow()
-                            mContext.stopService(Intent(mContext, OverlayService::class.java))
-                        } else {
-                            lastClickTime = System.currentTimeMillis()
-                        }
-                    } catch (ex: Exception) {
-                    }
-                }
-
-                @SuppressLint("ClickableViewAccessibility")
-                override fun onTouch(v: View?, event: MotionEvent?): Boolean {
-                    if (event != null) {
-                        when (event.action) {
-                            MotionEvent.ACTION_DOWN -> {
-                                touchStartRawX = event.rawX
-                                touchStartRawY = event.rawY
-                                paramStartX = params.x
-                                paramStartY = params.y
-                                isTouchDown = true
-                                touchStartTime = System.currentTimeMillis()
-                            }
-                            MotionEvent.ACTION_MOVE -> {
-                                if (isTouchDown) {
-
-                                    params.x = paramStartX + (event.rawX - touchStartRawX).toInt()
-                                    params.y = paramStartY + (event.rawY - touchStartRawY).toInt()
-                                    mWindowManager!!.updateViewLayout(v, params)
-                                }
-                            }
-                            MotionEvent.ACTION_UP -> {
-                                val moved = Math.abs(event.rawX - touchStartRawX) > 15 ||
-                                    Math.abs(event.rawY - touchStartRawY) > 15
-                                if (moved) {
-
-                                    monitorStorage.edit().putInt("x", params.x).putInt("y", params.y).apply()
-                                } else if (System.currentTimeMillis() - touchStartTime < 180) {
-                                    onClick()
-                                }
-                                isTouchDown = false
-                                if (moved) {
-                                    return true
-                                }
-                            }
-                            MotionEvent.ACTION_OUTSIDE,
-                            MotionEvent.ACTION_CANCEL -> {
-                                isTouchDown = false
-                            }
-                        }
-                    }
-                    return false
-                }
-            })
-
-            startTimer()
-            registerScreenReceiver()
-            return true
+            wm.addView(view, lp)
         } catch (ex: Exception) {
-            // If addView failed (e.g. the overlay permission was revoked while
-            // the service was running), reset the flag — otherwise every later
-            // showPopupWindow() returns true without a window and the overlay
-            // can never be shown again until the process dies.
-            show = false
-            Toast.makeText(mContext, "FloatMonitor Error\n" + ex.message, Toast.LENGTH_LONG).show()
+            // e.g. the overlay permission was revoked while the service was
+            // running. Nothing was added, so there is nothing to clean up.
+            Toast.makeText(
+                context,
+                context.getString(R.string.overlay_error, ex.message ?: ""),
+                Toast.LENGTH_LONG
+            ).show()
             return false
+        }
+
+        windowManager = wm
+        rootView = view
+        params = lp
+        shown = true
+
+        view.setOnTouchListener(HudTouchListener(lp, storage))
+        // A saved position can be off-screen after a rotation / resolution
+        // change; pull the window back as soon as it has a size.
+        clampAfterLayout()
+
+        executor = Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "HudPoller").apply { isDaemon = true }
+        }
+        // Kill a simpleperf stream orphaned by a previous process death
+        // before this session can start its own.
+        executor?.execute { CpuCyclesUtils.cleanupOrphans() }
+        restartTicking()
+        registerScreenReceiver()
+        return true
+    }
+
+    fun hidePopupWindow() {
+        if (!shown) return
+        shown = false
+
+        unregisterScreenReceiver()
+        tickFuture?.cancel(false)
+        tickFuture = null
+
+        // Last job on the poller thread: stop the root-side stream and give
+        // back the idle root shells, then let the thread end.
+        executor?.let { ex ->
+            try {
+                ex.execute {
+                    CpuCyclesUtils.stopStream()
+                    KeepShellPublic.releaseIdleShells()
+                }
+            } catch (ignored: Exception) {
+            }
+            ex.shutdown()
+        }
+        executor = null
+
+        try {
+            rootView?.let { windowManager?.removeViewImmediate(it) }
+        } catch (ignored: Exception) {
+        }
+        rootView = null
+        params = null
+        windowManager = null
+        clearViewRefs()
+    }
+
+    private fun clearViewRefs() {
+        cpuChart = null
+        cpuFreqText = null
+        gpuChart = null
+        gpuFreqText = null
+        batteryChart = null
+        batteryTempText = null
+        batteryLevelText = null
+        chargerView = null
+        otherInfo = null
+        chartList = null
+    }
+
+    /** Call when the display configuration (rotation, size) changed. */
+    fun onConfigurationChanged() {
+        if (shown) clampAfterLayout()
+    }
+
+    // --- view ---
+
+    @SuppressLint("InflateParams")
+    private fun inflateView(): LinearLayout {
+        val view = LayoutInflater.from(context).inflate(R.layout.fw_monitor, null) as LinearLayout
+        cpuChart = view.findViewById(R.id.fw_cpu_load)
+        gpuChart = view.findViewById(R.id.fw_gpu_load)
+        batteryChart = view.findViewById(R.id.fw_battery_chart)
+        cpuFreqText = view.findViewById(R.id.fw_cpu_freq)
+        gpuFreqText = view.findViewById(R.id.fw_gpu_freq)
+        batteryTempText = view.findViewById(R.id.fw_battery_temp)
+        batteryLevelText = view.findViewById(R.id.fw_battery_level)
+        chargerView = view.findViewById(R.id.fw_charger)
+        otherInfo = view.findViewById(R.id.fw_other_info)
+        chartList = view.findViewById(R.id.fw_chart_list)
+        otherInfo?.typeface = Typeface.MONOSPACE
+        return view
+    }
+
+    /** Switches between the compact ring view and the detailed text view. */
+    private fun toggleMode() {
+        val detailed = !showOtherInfo
+        showOtherInfo = detailed
+        otherInfo?.visibility = if (detailed) View.VISIBLE else View.GONE
+        chartList?.orientation = if (detailed) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        rootView?.orientation = if (detailed) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        if (!detailed) {
+            // The simpleperf stream is only needed for the per-core view.
+            executor?.execute { CpuCyclesUtils.stopStream() }
+        }
+        // Re-arm so the interval matches the new mode.
+        restartTicking()
+        clampAfterLayout()
+    }
+
+    private fun stopOverlay() {
+        // Same path as the Stop button / notification action, so the shared
+        // state is cleaned up by OverlayService.onDestroy().
+        context.stopService(Intent(context, OverlayService::class.java))
+    }
+
+    // --- touch ---
+
+    private inner class HudTouchListener(
+        private val lp: LayoutParams,
+        private val storage: android.content.SharedPreferences,
+    ) : View.OnTouchListener {
+        private val slop = ViewConfiguration.get(context).scaledTouchSlop
+        private var downRawX = 0f
+        private var downRawY = 0f
+        private var startX = 0
+        private var startY = 0
+        private var dragging = false
+
+        // Single tap (confirmed, i.e. not the first half of a double tap)
+        // toggles the layout; double tap closes the overlay. Detecting them
+        // together is what stops a double tap from also flipping the layout.
+        private val detector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                toggleMode()
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                stopOverlay()
+                return true
+            }
+        })
+
+        @SuppressLint("ClickableViewAccessibility")
+        override fun onTouch(v: View, event: MotionEvent): Boolean {
+            detector.onTouchEvent(event)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    startX = lp.x
+                    startY = lp.y
+                    dragging = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    if (!dragging && (abs(dx) > slop || abs(dy) > slop)) dragging = true
+                    if (dragging) {
+                        lp.x = startX + dx.toInt()
+                        lp.y = startY + dy.toInt()
+                        clampParams()
+                        try {
+                            windowManager?.updateViewLayout(v, lp)
+                        } catch (ignored: Exception) {
+                        }
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (dragging) savePosition(storage)
+                    dragging = false
+                }
+                MotionEvent.ACTION_CANCEL -> dragging = false
+            }
+            return true
         }
     }
 
-    private fun stopTimer() {
-        timer?.cancel()
-        timer = null
+    private fun savePosition(storage: android.content.SharedPreferences) {
+        val lp = params ?: return
+        storage.edit().putInt("x", lp.x).putInt("y", lp.y).apply()
     }
 
-    private var screenReceiver: BroadcastReceiver? = null
+    private fun screenSize(): Point {
+        val wm = windowManager ?: return Point(0, 0)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val b = wm.currentWindowMetrics.bounds
+            Point(b.width(), b.height())
+        } else {
+            val p = Point()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealSize(p)
+            p
+        }
+    }
 
-    // The overlay is invisible while the screen is off, but the timer kept
-    // polling the root shell (and dumpsys/simpleperf in detailed mode),
-    // preventing the device from resting. Pause everything on SCREEN_OFF.
+    /** Keeps the window inside the screen. Returns true if it moved. */
+    private fun clampParams(): Boolean {
+        val lp = params ?: return false
+        val view = rootView ?: return false
+        if (view.width == 0 || view.height == 0) return false
+        val screen = screenSize()
+        if (screen.x == 0 || screen.y == 0) return false
+        val nx = lp.x.coerceIn(0, maxOf(0, screen.x - view.width))
+        val ny = lp.y.coerceIn(0, maxOf(0, screen.y - view.height))
+        val moved = nx != lp.x || ny != lp.y
+        lp.x = nx
+        lp.y = ny
+        return moved
+    }
+
+    private fun clampAfterLayout() {
+        val view = rootView ?: return
+        view.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (view.viewTreeObserver.isAlive) view.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                if (!shown) return
+                if (clampParams()) {
+                    try {
+                        windowManager?.updateViewLayout(view, params)
+                    } catch (ignored: Exception) {
+                    }
+                    context.getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE).let { savePosition(it) }
+                }
+            }
+        })
+    }
+
+    // --- screen on/off ---
+
+    // The overlay is invisible while the screen is off, but polling kept the
+    // root shell (and dumpsys/simpleperf in detailed mode) busy, preventing
+    // the device from resting. Pause everything on SCREEN_OFF.
     private fun registerScreenReceiver() {
         if (screenReceiver != null) return
-        screenReceiver = object : BroadcastReceiver() {
+        val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
-                        stopTimer()
-                        Thread { CpuCyclesUtils.stopStream() }.start()
+                        tickFuture?.cancel(false)
+                        tickFuture = null
+                        executor?.execute { CpuCyclesUtils.stopStream() }
                     }
-                    Intent.ACTION_SCREEN_ON -> {
-                        if (show) startTimer()
-                    }
+                    Intent.ACTION_SCREEN_ON -> if (shown) restartTicking()
                 }
             }
         }
         try {
-            mContext.registerReceiver(screenReceiver, IntentFilter().apply {
+            context.registerReceiver(receiver, IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
             })
+            screenReceiver = receiver
         } catch (ex: Exception) {
             screenReceiver = null
         }
@@ -213,306 +402,216 @@ class FloatMonitor(private val mContext: Context) {
     private fun unregisterScreenReceiver() {
         screenReceiver?.let {
             try {
-                mContext.unregisterReceiver(it)
-            } catch (ex: Exception) {
+                context.unregisterReceiver(it)
+            } catch (ignored: Exception) {
             }
         }
         screenReceiver = null
     }
 
-    private fun subFreqStr(freq: String?): String {
-        if (freq == null) return ""
-        return when {
-            freq.length > 3 -> freq.substring(0, freq.length - 3)
-            freq.isEmpty() -> "0"
-            else -> freq
+    // --- polling ---
+
+    private fun restartTicking() {
+        val ex = executor ?: return
+        tickFuture?.cancel(false)
+        // Detailed mode benefits from faster updates; compact mode is fine at 2s.
+        val interval = if (showOtherInfo) 1500L else 2000L
+        try {
+            tickFuture = ex.scheduleWithFixedDelay({
+                // An uncaught exception would silently end the periodic task
+                // and freeze the HUD, so a tick must never throw.
+                try {
+                    updateInfo()
+                } catch (ignored: Exception) {
+                }
+            }, 0, interval, TimeUnit.MILLISECONDS)
+        } catch (ignored: Exception) {
+            // executor already shut down
         }
     }
 
-    private var view: View? = null
-    private var cpuChart: FloatMonitorChartView? = null
-    private var cpuFreqText: TextView? = null
-    private var gpuChart: FloatMonitorChartView? = null
-    private var gpuFreqText: TextView? = null
-    private var temperatureChart: FloatMonitorBatteryView? = null
-    private var temperatureText: TextView? = null
-    private var batteryLevelText: TextView? = null
-    private var chargerView: ImageView? = null
-    private var otherInfo: TextView? = null
-
-    private var activityManager: ActivityManager? = null
-    private val myHandler = Handler(Looper.getMainLooper())
-    private val info = ActivityManager.MemoryInfo()
-
-    private var totalMem = 0
-    private var availMem = 0
-    private var coreCount = -1
-    private var showOtherInfo = false
-    private var clusters = ArrayList<Array<String>>()
-    private var clustersFreq = ArrayList<String>()
-
-    private var batteryManager: BatteryManager? = null
+    private class Snapshot(
+        val cpuLoad: Int,
+        val cpuFreqText: String,
+        val gpuFreqText: String,
+        val gpuLoad: Int,
+        val batteryLevel: Int,
+        val batteryTemp: Double,
+        val charging: Boolean,
+        val details: CharSequence?,
+    )
 
     private fun whiteBoldSpan(text: String): SpannableString {
         return SpannableString(text).apply {
             setSpan(ForegroundColorSpan(android.graphics.Color.WHITE), 0, text.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            setSpan(StyleSpan(android.graphics.Typeface.BOLD), 0, text.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(StyleSpan(Typeface.BOLD), 0, text.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
     }
+
+    /** kHz -> whole MHz text, "--" if unknown. */
+    private fun mhzText(khz: Long): String = if (khz > 0) (khz / 1000).toString() else "--"
 
     private fun updateInfo() {
-        if (coreCount < 1) {
-            coreCount = cpuFrequencyUtils.getCoreCount()
+        if (!shown) return
+
+        if (coreCount < 1) coreCount = cpuFrequencyUtils.getCoreCount()
+        // Re-scanned on every tick while some CPUs are offline (the kernel
+        // drops the cpufreq dir of an offline cluster) so they show up the
+        // moment they come back.
+        val scan = cpuFrequencyUtils.getClusters()
+
+        val load = cpuLoadUtils.sample()
+        val loads = load?.perCore ?: emptyMap()
+        if (load != null) {
+            val online = loads.keys
+            val previouslyOnline = lastOnlineCores
+            if (previouslyOnline != null && previouslyOnline != online) {
+                // A core was hot-(un)plugged by someone: simpleperf opens its
+                // counters once at launch and would never see a re-onlined
+                // core, so relaunch it (lazily, on the next detailed tick).
+                CpuCyclesUtils.restartAfterCoreHotplug()
+            }
+            lastOnlineCores = HashSet(online)
         }
-        // Retried separately from coreCount: on first launch the su prompt may
-        // not be confirmed yet, so cluster info can come back empty while the
-        // core count (plain File.exists, no root) already succeeded.
-        if (clusters.isEmpty()) {
-            clusters = cpuFrequencyUtils.getClusterInfo()
-        }
-        clustersFreq.clear()
-        for (coreIndex in 0 until clusters.size) {
-            clustersFreq.add(cpuFrequencyUtils.getCurrentFrequency(coreIndex))
-        }
-        val loads = cpuLoadUtils.cpuLoad
-        val gpuFreq = GpuUtils.getGpuFreq() + "Mhz"
+
+        val clusterFreqs = scan.clusters.map { cpuFrequencyUtils.getClusterFrequencyKHz(it) }
+        val maxFreqKhz = clusterFreqs.maxOrNull() ?: -1L
+
+        val gpuFreq = GpuUtils.getGpuFreq()
         val gpuLoad = GpuUtils.getGpuLoad()
 
-        var maxFreq = 0
-        for (item in clustersFreq) {
-            if (item.isNotEmpty()) {
-                try {
-                    val freq = item.toInt()
-                    if (freq > maxFreq) maxFreq = freq
-                } catch (ex: Exception) {
-                }
-            }
-        }
-        val cpuFreq = maxFreq.toString()
+        BatteryStatusReader.update(context)
 
-        activityManager!!.getMemoryInfo(info)
+        val details = if (showOtherInfo) buildDetails(scan, clusterFreqs, loads) else null
 
-        var cpuLoad = cpuLoadUtils.cpuLoadSum
-        if (cpuLoad < 0) cpuLoad = 0.0
+        val snapshot = Snapshot(
+            cpuLoad = Math.ceil(load?.total ?: 0.0).toInt().coerceIn(0, 100),
+            cpuFreqText = (if (maxFreqKhz > 0) "${maxFreqKhz / 1000}" else "0") + "MHz",
+            gpuFreqText = if (gpuFreq.isEmpty()) "--MHz" else "${gpuFreq}MHz",
+            gpuLoad = gpuLoad,
+            batteryLevel = BatteryStatusReader.batteryCapacity,
+            batteryTemp = BatteryStatusReader.temperatureCurrent,
+            charging = BatteryStatusReader.batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING,
+            details = details,
+        )
+        mainHandler.post { applySnapshot(snapshot) }
+    }
 
-        BatteryStatusReader.update(mContext)
+    private fun buildDetails(
+        scan: com.thermaloverlay.overlay.metrics.ClusterScan,
+        clusterFreqs: List<Long>,
+        loads: Map<Int, Double>,
+    ): CharSequence {
+        activityManager.getMemoryInfo(memInfo)
+        // Read GPU memory only here: it's a shell call per tick and the value
+        // is not shown anywhere in compact mode.
+        val gpuMemoryUsage = GpuUtils.getMemoryUsage()
+        val totalMem = (memInfo.totalMem / 1024 / 1024f).toInt()
+        val availMem = (memInfo.availMem / 1024 / 1024f).toInt()
+        val ramPercent = if (totalMem > 0) (totalMem - availMem) * 100 / totalMem else 0
+        val swapPercent = SwapUtils.getZramFillPercent()
+        val ddrFreq = cpuFrequencyUtils.getDdrFrequency()
 
-        val batteryCurrentNow = batteryManager?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
-        val dualBatteryMultiplier = if (OverlayPrefs.isDualBattery(mContext)) 2 else 1
-        val batteryCurrentNowMa = batteryCurrentNow?.let { (it / BatteryStatusReader.currentUnitDivisor) * dualBatteryMultiplier }
+        val b = SpannableStringBuilder()
+        b.append(whiteBoldSpan("#RAM  $ramPercent%   $swapPercent%"))
+        b.append("\n")
 
-        val otherInfoBuilder = SpannableStringBuilder()
-        if (showOtherInfo) {
-            // Read GPU memory only here: it's a shell call per tick and the
-            // value is not shown anywhere in compact mode.
-            val gpuMemoryUsage = GpuUtils.getMemoryUsage()
-            totalMem = (info.totalMem / 1024 / 1024f).toInt()
-            availMem = (info.availMem / 1024 / 1024f).toInt()
-            val swapPercent = SwapUtils.getZramFillPercent()
-            val ramInfoText = "#RAM  " + ((totalMem - availMem) * 100 / totalMem).toString() + "%   " + swapPercent + "%"
-            val ddrFreq = cpuFrequencyUtils.getDdrFrequency()
-
-            otherInfoBuilder.run {
-                append(whiteBoldSpan(ramInfoText))
-                append("\n")
-
-                if (ddrFreq.isNotEmpty()) {
-                    append(" DDR  $ddrFreq")
-                    append("\n")
-                }
-
-                if (gpuMemoryUsage != null) {
-                    append(whiteBoldSpan("#GMEM " + gpuMemoryUsage))
-                    append("\n")
-                }
-
-                append(whiteBoldSpan("#CPU  " + cpuLoadUtils.getCpuTemperatureText()))
-                append("\n")
-
-                val perCoreCycles = CpuCyclesUtils.getPerCoreCyclesMhz()
-
-                for ((clusterIndex, cluster) in clusters.withIndex()) {
-                    if (clusterIndex != 0) append("\n")
-                    if (cluster.isNotEmpty()) {
-                        try {
-                            val title = "#" + cluster[0] + "~" + cluster[cluster.size - 1] + "  " + subFreqStr(clustersFreq.getOrNull(clusterIndex)) + "MHz"
-                            append(whiteBoldSpan(title))
-
-                            val otherInfos = StringBuilder("")
-                            for (core in cluster) {
-                                val coreIndex = core.toInt()
-                                otherInfos.append("\n")
-                                val load = loads[coreIndex]
-
-                                // load == null means the core is offline (it
-                                // disappears from /proc/stat): show "×" in both
-                                // columns and skip the pointless freq read.
-                                if (load == null) {
-                                    otherInfos.append("×".padStart(4))
-                                    otherInfos.append("  ")
-                                    otherInfos.append("×")
-                                    continue
-                                }
-
-                                val loadStr = "${load.toInt()}%"
-                                otherInfos.append(loadStr.padStart(4))
-                                otherInfos.append("  ")
-
-                                val cyclesMhz = perCoreCycles?.getOrNull(coreIndex)
-                                val displayMhz = if (cyclesMhz != null && cyclesMhz > 0) {
-                                    cyclesMhz
-                                } else {
-                                    val coreFreq = subFreqStr(cpuFrequencyUtils.getCoreCurrentFrequency(core)).toIntOrNull()
-                                    if (coreFreq != null) coreFreq * load.toInt() / 100 else null
-                                }
-
-                                val mhzStr = if (displayMhz != null) "${displayMhz}M" else "--"
-                                otherInfos.append(mhzStr)
-                            }
-                            append(otherInfos.toString())
-                        } catch (ex: Exception) {
-                        }
-                    }
-                }
-
-                fpsUtils.currentFps?.run {
-                    append("\n")
-                    append(whiteBoldSpan("#FPS  $this"))
-                }
-
-                batteryCurrentNowMa?.run {
-                    if (this > -20000 && this < 20000 && BatteryStatusReader.batteryVoltage > 0) {
-                        val watts = (this * BatteryStatusReader.batteryVoltage) / 1000.0
-                        val formatted = if (watts >= 100 || watts <= -100) {
-                            String.format("%+.1fW", watts)
-                        } else {
-                            String.format("%+.2fW", watts)
-                        }
-                        append("\n")
-                        append(whiteBoldSpan("#PWR  $formatted"))
-                    }
-                }
-            }
+        if (ddrFreq.isNotEmpty()) {
+            b.append(" DDR  $ddrFreq")
+            b.append("\n")
         }
 
-        val temperature = BatteryStatusReader.temperatureCurrent
+        if (gpuMemoryUsage != null) {
+            b.append(whiteBoldSpan("#GMEM $gpuMemoryUsage"))
+            b.append("\n")
+        }
 
-        myHandler.post {
-            // Guarded: an exception here runs on the main thread and would
-            // crash the whole app (views may already be detached mid-hide).
-            try {
-                if (showOtherInfo) {
-                    otherInfo?.text = null
-                    otherInfo?.text = otherInfoBuilder
+        b.append(whiteBoldSpan("#CPU  " + cpuLoadUtils.getCpuTemperatureText()))
+        b.append("\n")
+
+        val perCoreCycles = CpuCyclesUtils.getPerCoreCyclesMhz()
+
+        // CPUs that belong to no known policy (a fully offline cluster) get a
+        // group of their own, so they are visible even before the kernel
+        // reveals their cluster.
+        val groups = ArrayList<List<Int>>(scan.clusters)
+        if (scan.missing.isNotEmpty()) groups.add(scan.missing)
+
+        for ((groupIndex, cluster) in groups.withIndex()) {
+            if (groupIndex != 0) b.append("\n")
+            if (cluster.isEmpty()) continue
+
+            val freqKhz = clusterFreqs.getOrNull(groupIndex) ?: -1L
+            b.append(whiteBoldSpan("#" + cluster.first() + "~" + cluster.last() + "  " + mhzText(freqKhz) + "MHz"))
+
+            val lines = StringBuilder()
+            for (core in cluster) {
+                lines.append("\n")
+                val coreLoad = loads[core]
+
+                // null means the core is offline (it disappears from
+                // /proc/stat): show "×" in both columns, skip the freq read.
+                if (coreLoad == null) {
+                    lines.append("×".padStart(4)).append("  ").append("×")
+                    continue
                 }
 
-                cpuChart!!.setData(100f, (100 - cpuLoad).toFloat())
-                cpuFreqText!!.text = subFreqStr(cpuFreq) + "Mhz"
+                lines.append("${coreLoad.toInt()}%".padStart(4)).append("  ")
 
-                gpuFreqText!!.text = gpuFreq
-                if (gpuLoad > -1) {
-                    gpuChart!!.setData(100f, (100f - gpuLoad))
-                }
-
-                temperatureChart!!.setData(100.0, 100.0 - BatteryStatusReader.batteryCapacity, temperature)
-                temperatureText!!.text = "$temperature°C"
-                batteryLevelText!!.text = "${BatteryStatusReader.batteryCapacity}%"
-                chargerView!!.visibility = if (BatteryStatusReader.batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING) {
-                    View.VISIBLE
+                val cyclesMhz = perCoreCycles?.getOrNull(core)
+                val displayMhz = if (cyclesMhz != null && cyclesMhz > 0) {
+                    cyclesMhz
                 } else {
-                    View.GONE
+                    val khz = cpuFrequencyUtils.getCoreFrequencyKHz(core)
+                    if (khz > 0) (khz / 1000).toInt() * coreLoad.toInt() / 100 else null
                 }
-            } catch (ex: Exception) {
+                lines.append(if (displayMhz != null) "${displayMhz}M" else "--")
             }
+            b.append(lines.toString())
+        }
+
+        fpsUtils.currentFps?.let {
+            b.append("\n")
+            b.append(whiteBoldSpan("#FPS  $it"))
+        }
+
+        val currentNow = batteryManager?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+        if (currentNow != null) {
+            val multiplier = if (OverlayPrefs.isDualBattery(context)) 2 else 1
+            val ma = (currentNow / BatteryStatusReader.currentUnitDivisor) * multiplier
+            val volts = BatteryStatusReader.batteryVoltage
+            if (ma > -20000 && ma < 20000 && volts > 0) {
+                val watts = (ma * volts) / 1000.0
+                val pattern = if (abs(watts) >= 100) "%+.1fW" else "%+.2fW"
+                b.append("\n")
+                b.append(whiteBoldSpan("#PWR  " + String.format(Locale.US, pattern, watts)))
+            }
+        }
+        return b
+    }
+
+    private fun applySnapshot(s: Snapshot) {
+        // The window may have been hidden while this was queued.
+        if (!shown) return
+        cpuChart?.setPercent(s.cpuLoad)
+        cpuFreqText?.text = s.cpuFreqText
+        gpuFreqText?.text = s.gpuFreqText
+        if (s.gpuLoad > -1) gpuChart?.setPercent(s.gpuLoad)
+
+        batteryChart?.setData(s.batteryLevel, s.batteryTemp)
+        batteryTempText?.text =
+            if (s.batteryTemp.isNaN()) "--°C" else String.format(Locale.US, "%.1f°C", s.batteryTemp)
+        batteryLevelText?.text = "${s.batteryLevel}%"
+        chargerView?.visibility = if (s.charging) View.VISIBLE else View.GONE
+
+        // Compare against the live flag: the user may have switched back to
+        // compact mode while this snapshot was being computed.
+        if (showOtherInfo && s.details != null) {
+            otherInfo?.text = s.details
         }
     }
 
-    private fun startTimer() {
-        stopTimer()
-        // Detailed mode benefits from faster updates; compact mode is fine at
-        // 2s, cutting the number of shell round trips by a quarter.
-        val interval = if (showOtherInfo) 1500L else 2000L
-        timer = Timer()
-        timer!!.schedule(object : TimerTask() {
-            override fun run() {
-                // java.util.Timer permanently dies on an uncaught exception in
-                // a task — the HUD would silently freeze. Never let one tick
-                // kill all future updates.
-                try {
-                    updateInfo()
-                } catch (ex: Exception) {
-                }
-            }
-        }, 0, interval)
-    }
-
-    fun hidePopupWindow() {
-        stopTimer()
-        unregisterScreenReceiver()
-
-        Thread { CpuCyclesUtils.stopStream() }.start()
-        if (show && mView != null) {
-            try {
-                mWindowManager?.removeViewImmediate(mView)
-            } catch (ex: Exception) {
-            }
-            mView = null
-            show = false
-        }
-    }
-
-    @SuppressLint("ApplySharedPref", "ClickableViewAccessibility")
-    private fun setUpView(context: Context): View {
-        view = LayoutInflater.from(context).inflate(R.layout.fw_monitor, null)
-
-        cpuChart = view!!.findViewById(R.id.fw_cpu_load)
-        gpuChart = view!!.findViewById(R.id.fw_gpu_load)
-        temperatureChart = view!!.findViewById(R.id.fw_battery_chart)
-
-        cpuFreqText = view!!.findViewById(R.id.fw_cpu_freq)
-        gpuFreqText = view!!.findViewById(R.id.fw_gpu_freq)
-        temperatureText = view!!.findViewById(R.id.fw_battery_temp)
-        batteryLevelText = view!!.findViewById(R.id.fw_battery_level)
-        chargerView = view!!.findViewById(R.id.fw_charger)
-        otherInfo = view!!.findViewById(R.id.fw_other_info)
-
-        activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-
-        otherInfo?.typeface = try {
-            android.graphics.Typeface.createFromFile("/system/fonts/DroidSansMono.ttf")
-        } catch (ex: Exception) {
-            android.graphics.Typeface.MONOSPACE
-        }
-
-        view!!.setOnClickListener {
-            try {
-                otherInfo?.visibility = if (showOtherInfo) View.GONE else View.VISIBLE
-                it.findViewById<LinearLayout>(R.id.fw_chart_list).orientation =
-                    if (showOtherInfo) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-                (mView as LinearLayout).orientation =
-                    if (showOtherInfo) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-                showOtherInfo = !showOtherInfo
-                if (!showOtherInfo) {
-                    // Collapsed back to compact: the simpleperf stream is only
-                    // needed for the per-core view — without this it kept
-                    // running at 2 Hz until the overlay was fully hidden.
-                    Thread { CpuCyclesUtils.stopStream() }.start()
-                }
-                // Re-arm the timer so the interval matches the new mode.
-                startTimer()
-            } catch (ex: Exception) {
-            }
-        }
-
-        return view!!
-    }
-
-    companion object {
-        private var mWindowManager: WindowManager? = null
-        var show: Boolean = false
-
-        @SuppressLint("StaticFieldLeak")
-        private var mView: View? = null
-        private var timer: Timer? = null
+    private companion object {
+        const val POSITION_PREFS = "float_monitor_storage"
     }
 }

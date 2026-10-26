@@ -1,9 +1,11 @@
 /**
  * Quick Settings tile that starts or stops the overlay in one tap without
- * opening MainActivity.
+ * opening MainActivity. Its state follows [OverlayState], so it also updates
+ * when the overlay is closed from elsewhere (HUD double tap, notification).
  */
 package com.thermaloverlay.overlay
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.drawable.Icon
@@ -11,55 +13,67 @@ import android.os.Build
 import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
-import com.thermaloverlay.overlay.ui.FloatMonitor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class OverlayTileService : TileService() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var collectJob: Job? = null
 
     override fun onStartListening() {
         super.onStartListening()
-        refreshTile()
+        collectJob?.cancel()
+        collectJob = scope.launch {
+            OverlayState.running.collect { running -> updateTileState(running) }
+        }
+    }
+
+    override fun onStopListening() {
+        collectJob?.cancel()
+        collectJob = null
+        super.onStopListening()
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
     }
 
     override fun onClick() {
         super.onClick()
 
-        if (OverlayPrefs.isEnabled(this)) {
+        if (OverlayState.isRunning) {
             stopService(Intent(this, OverlayService::class.java))
-            OverlayPrefs.setEnabled(this, false)
-            updateTileState(Tile.STATE_INACTIVE)
+            updateTileState(false)
             return
         }
 
-        if (!hasOverlayPermission()) {
+        // Known-missing root or overlay permission: the main screen explains
+        // it and can re-check. (Unknown root is checked by the service.)
+        if (!hasOverlayPermission() || RootState.granted.value == false) {
             openMainActivity()
             return
         }
 
-        if (OverlayPrefs.isEnabled(this) || FloatMonitor.show) {
-            updateTileState(Tile.STATE_ACTIVE)
-            return
-        }
-
-        val serviceIntent = Intent(this, OverlayService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
-        OverlayPrefs.setEnabled(this, true)
-        updateTileState(Tile.STATE_ACTIVE)
+        // No optimistic "active" state: the service may still refuse to start
+        // (no root), so the tile follows OverlayState instead.
+        startForegroundService(Intent(this, OverlayService::class.java))
     }
 
-    private fun hasOverlayPermission(): Boolean {
-        return Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)
-    }
+    private fun hasOverlayPermission(): Boolean = Settings.canDrawOverlays(this)
 
+    // The Intent overload is only reached below API 34 (see the version check);
+    // lint can't see through that.
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     private fun openMainActivity() {
         val intent = Intent(this, MainActivity::class.java)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-
             val pendingIntent = PendingIntent.getActivity(
                 this, 0, intent, PendingIntent.FLAG_IMMUTABLE
             )
@@ -70,15 +84,9 @@ class OverlayTileService : TileService() {
         }
     }
 
-    private fun refreshTile() {
-        updateTileState(
-            if (OverlayPrefs.isEnabled(this)) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        )
-    }
-
-    private fun updateTileState(state: Int) {
+    private fun updateTileState(running: Boolean) {
         val tile = qsTile ?: return
-        tile.state = state
+        tile.state = if (running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.icon = Icon.createWithResource(this, R.drawable.ic_tile_overlay)
         tile.label = getString(R.string.tile_label)
         tile.updateTile()

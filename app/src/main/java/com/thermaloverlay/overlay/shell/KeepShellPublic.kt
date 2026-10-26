@@ -9,27 +9,7 @@ object KeepShellPublic {
 
     fun getInstance(key: String, rootMode: Boolean): KeepShell {
         synchronized(keepShells) {
-            if (!keepShells.containsKey(key)) {
-                keepShells[key] = KeepShell(rootMode)
-            }
-            return keepShells[key]!!
-        }
-    }
-
-    fun destroyInstance(key: String) {
-        synchronized(keepShells) {
-            val keepShell = keepShells.remove(key) ?: return
-            keepShell.tryExit()
-        }
-    }
-
-    fun destroyAll() {
-        synchronized(keepShells) {
-            while (keepShells.isNotEmpty()) {
-                val key = keepShells.keys.first()
-                val keepShell = keepShells.remove(key)!!
-                keepShell.tryExit()
-            }
+            return keepShells.getOrPut(key) { KeepShell(rootMode) }
         }
     }
 
@@ -44,25 +24,23 @@ object KeepShellPublic {
         }
     }
 
-    fun doCmdSync(commands: List<String>): Boolean {
-        val stringBuilder = StringBuilder()
-        for (cmd in commands) {
-            stringBuilder.append(cmd)
-            stringBuilder.append("\n\n")
-        }
-        return doCmdSync(stringBuilder.toString()) != "error"
+    fun doCmdSync(cmd: String, timeoutMs: Long = KeepShell.DEFAULT_TIMEOUT_MS): String {
+        return getDefaultInstance().doCmdSync(cmd, timeoutMs)
     }
 
-    fun doCmdSync(cmd: String): String {
-        return getDefaultInstance().doCmdSync(cmd)
-    }
-
-    fun checkRoot(): Boolean {
+    fun checkRoot(retryNow: Boolean = false): Boolean {
+        if (retryNow) defaultKeepShell.resetBackoff()
         return defaultKeepShell.checkRoot()
     }
 
-    fun tryExit() {
-        defaultKeepShell.tryExit()
-        secondaryKeepShell.tryExit()
+    /**
+     * Releases the root processes that nobody is using, e.g. when the overlay
+     * stops. They are respawned on demand by the next command.
+     */
+    fun releaseIdleShells() {
+        defaultKeepShell.tryExitIfIdle()
+        secondaryKeepShell.tryExitIfIdle()
+        val others = synchronized(keepShells) { keepShells.values.toList() }
+        others.forEach { it.tryExitIfIdle() }
     }
 }

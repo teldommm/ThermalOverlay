@@ -1,12 +1,20 @@
 /**
  * sysfs paths and read/write helpers for CPU cluster and GPU (Adreno/kgsl)
  * frequency control, via this project's own root shell.
+ *
+ * Writes are verified: the node is read back and the write is repeated a few
+ * times if the value didn't stick (some kernels reject a write transiently,
+ * and vendor daemons may overwrite it a moment later). Min/max writes also
+ * move the opposite bound first when needed — on many kernels a max below the
+ * current min (or a min above the current max) is rejected with EINVAL, which
+ * used to look like "the frequency didn't apply, select it again".
  */
 package com.thermaloverlay.overlay.freqcontrol
 
-import com.thermaloverlay.overlay.shell.KernelProrp
 import com.thermaloverlay.overlay.shell.RootFile
+import com.thermaloverlay.overlay.shell.SysReader
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 object FreqControlUtils {
 
@@ -77,56 +85,43 @@ object FreqControlUtils {
 
     enum class WriteResult { OK, FAILED }
 
-    private fun fileExists(path: String): Boolean {
-        return File(path).exists() || RootFile.fileExists(path)
+    // --- node detection -------------------------------------------------
+    //
+    // A "does this node exist" answer is cached only when it was actually
+    // determined. If the root shell failed (null), nothing is cached and the
+    // next call asks again — otherwise a probe made before the root grant
+    // would hide the cluster/GPU card until the process restarts.
+
+    private val existsCache = ConcurrentHashMap<String, Boolean>()
+
+    private fun exists(path: String): Boolean? {
+        existsCache[path]?.let { return it }
+        val result = if (File(path).exists()) true else RootFile.fileExistsOrNull(path)
+        if (result != null) existsCache[path] = result
+        return result
     }
 
-    private var cachedBigPolicy: Int = -1
+    /** Policy number of the "big" cluster (3, 4 or 6), 0 if none, -1 if unknown yet. */
     fun detectBigPolicy(): Int {
-        if (cachedBigPolicy != -1) return cachedBigPolicy
-        val found = when {
-            fileExists(AVAIL_FREQ_CPU3) -> 3
-            fileExists(AVAIL_FREQ_CPU4) -> 4
-            fileExists(AVAIL_FREQ_CPU6) -> 6
-            else -> 0
+        for ((policy, path) in listOf(3 to AVAIL_FREQ_CPU3, 4 to AVAIL_FREQ_CPU4, 6 to AVAIL_FREQ_CPU6)) {
+            when (exists(path)) {
+                true -> return policy
+                null -> return -1
+                false -> Unit
+            }
         }
-        cachedBigPolicy = found
-        return found
+        return 0
     }
 
-    fun hasBigCluster(): Boolean = detectBigPolicy() != 0
+    fun hasBigCluster(): Boolean = detectBigPolicy() > 0
 
-    private var cachedHasPrime: Boolean? = null
-    fun hasPrimeCluster(): Boolean {
-        cachedHasPrime?.let { return it }
-        val found = fileExists(AVAIL_FREQ_CPU7)
-        cachedHasPrime = found
-        return found
-    }
+    fun hasPrimeCluster(): Boolean = exists(AVAIL_FREQ_CPU7) == true
 
-    private var cachedHasGpu: Boolean? = null
-    fun hasGpu(): Boolean {
-        cachedHasGpu?.let { return it }
-        val found = fileExists(MIN_FREQ_GPU)
-        cachedHasGpu = found
-        return found
-    }
+    fun hasGpu(): Boolean = exists(MIN_FREQ_GPU) == true
 
-    private var cachedHasCpuInputBoostMs: Boolean? = null
-    fun hasCpuInputBoostMs(): Boolean {
-        cachedHasCpuInputBoostMs?.let { return it }
-        val found = fileExists(CPU_INPUT_BOOST_MS)
-        cachedHasCpuInputBoostMs = found
-        return found
-    }
+    fun hasCpuInputBoostMs(): Boolean = exists(CPU_INPUT_BOOST_MS) == true
 
-    private var cachedHasCpuSchedBoostOnInput: Boolean? = null
-    fun hasCpuSchedBoostOnInput(): Boolean {
-        cachedHasCpuSchedBoostOnInput?.let { return it }
-        val found = fileExists(CPU_SCHED_BOOST_ON_INPUT)
-        cachedHasCpuSchedBoostOnInput = found
-        return found
-    }
+    fun hasCpuSchedBoostOnInput(): Boolean = exists(CPU_SCHED_BOOST_ON_INPUT) == true
 
     fun pathsFor(cluster: Cluster): ClusterPaths? = when (cluster) {
         Cluster.LITTLE -> ClusterPaths(
@@ -147,118 +142,158 @@ object FreqControlUtils {
         }
     }
 
-    private fun readRaw(path: String): String = KernelProrp.getProp(path).trim()
+    // --- parsing --------------------------------------------------------
 
-    fun readFreqMHz(path: String): Int {
-        val raw = readRaw(path)
-        return raw.toIntOrNull()?.let { it / 1000 } ?: 0
+    fun parseKHz(raw: String?): Int = raw?.trim()?.toIntOrNull() ?: 0
+
+    /** kHz node -> whole MHz (display only). */
+    fun parseMHzFromKHz(raw: String?): Int = parseKHz(raw) / 1000
+
+    fun parseGpuCurMHz(raw: String?): Int = raw?.trim()?.toLongOrNull()?.let { (it / 1_000_000).toInt() } ?: 0
+
+    fun parseIntList(raw: String?): List<Int> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return raw.trim().split(Regex("\\s+")).mapNotNull { it.toIntOrNull() }
     }
 
-    // CPU frequencies are handled in kHz end-to-end (sysfs native unit).
-    // Converting to whole MHz loses the remainder (e.g. 1804800 kHz -> 1804 MHz),
-    // and writing 1804000 back makes cpufreq clamp max_freq DOWN a full step.
-    fun readFreqKHz(path: String): Int {
-        val raw = readRaw(path)
-        return raw.toIntOrNull() ?: 0
+    fun parseWordList(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return raw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
     }
 
-    fun readAvailableFreqKHz(path: String): List<Int> {
-        val raw = readRaw(path)
-        if (raw.isEmpty()) return emptyList()
-        return raw.split(Regex("\\s+")).mapNotNull { it.toIntOrNull() }
-    }
+    // --- reads ----------------------------------------------------------
 
-    fun readAvailableFreqWithBoost(freqPath: String, boostPath: String?): List<Int> {
-        val base = readAvailableFreqKHz(freqPath)
-        if (boostPath == null) return base.distinct().sorted()
-        val boost = readAvailableFreqKHz(boostPath)
-        return (base + boost).distinct().sorted()
-    }
+    /** Reads many nodes with at most one shell round trip. */
+    fun readNodes(paths: Collection<String>): Map<String, String> =
+        SysReader.readManyMap(paths.toList())
 
-    fun readGovernor(path: String): String = readRaw(path)
+    private fun readRaw(path: String): String = SysReader.read(path).trim()
 
-    fun readAvailableGovernors(path: String): List<String> {
-        val raw = readRaw(path)
-        if (raw.isEmpty()) return emptyList()
-        return raw.split(Regex("\\s+")).filter { it.isNotEmpty() }
-    }
-
-    fun readGpuFreqMHz(): Int {
-        val raw = readRaw(CUR_FREQ_GPU)
-        return raw.toLongOrNull()?.let { (it / 1_000_000).toInt() } ?: 0
-    }
-
-    fun readGpuMinMax(path: String): Int = readRaw(path).toIntOrNull() ?: 0
-
-    fun readAvailableFreqGPU(): List<Int> {
-        val raw = readRaw(AVAIL_FREQ_GPU)
-        if (raw.isEmpty()) return emptyList()
-        return raw.split(Regex("\\s+")).mapNotNull { it.toIntOrNull() }.distinct().sorted()
-    }
+    fun readFreqKHz(path: String): Int = parseKHz(readRaw(path))
 
     fun readIntNode(path: String): Int? = readRaw(path).toIntOrNull()
-    fun readAdrenoBoost(): String = readRaw(ADRENO_BOOST)
-    fun readThrottlingEnabled(): Boolean = readRaw(GPU_THROTTLING) == "1"
-    fun readCpuSchedBoostOnInputEnabled(): Boolean = readRaw(CPU_SCHED_BOOST_ON_INPUT) == "1"
-
-    private fun writeNode(path: String, value: String): WriteResult =
-        if (RootFile.writeFile(path, value)) WriteResult.OK else WriteResult.FAILED
-
-    fun writeFreqCPU(path: String, khz: Int): WriteResult =
-        writeNode(path, khz.toString())
-
-    fun writeGovernor(path: String, governor: String): WriteResult =
-        writeNode(path, governor)
-
-    fun writeFreqGPU(path: String, mhz: Int): WriteResult =
-        writeNode(path, mhz.toString())
-
-    fun writeIntNode(path: String, value: Int): WriteResult =
-        writeNode(path, value.toString())
-
-    fun writeAdrenoBoost(value: Int): WriteResult =
-        writeNode(ADRENO_BOOST, value.toString())
-
-    fun writeThrottling(enabled: Boolean): WriteResult =
-        writeNode(GPU_THROTTLING, if (enabled) "1" else "0")
-
-    fun writeCpuInputBoostMs(ms: Int): WriteResult =
-        writeNode(CPU_INPUT_BOOST_MS, ms.toString())
-
-    fun writeCpuSchedBoostOnInput(enabled: Boolean): WriteResult =
-        writeNode(CPU_SCHED_BOOST_ON_INPUT, if (enabled) "1" else "0")
-
-    // --- CPU core hotplug (online/offline) ---
-
-    private fun coreOnlinePath(core: Int) = "/sys/devices/system/cpu/cpu$core/online"
 
     private var cachedCoreCount: Int = -1
+
     fun cpuCoreCount(): Int {
         if (cachedCoreCount != -1) return cachedCoreCount
         // "present" looks like "0-7"; parse the upper bound. Fall back to the
         // JVM view (may under-report if cores are already offline, so it is
         // only a last resort).
-        val raw = readRaw("/sys/devices/system/cpu/present")
+        val raw = SysReader.readOrNull("/sys/devices/system/cpu/present") ?: return Runtime.getRuntime().availableProcessors()
         val count = raw.substringAfterLast('-').toIntOrNull()?.plus(1)
-            ?: Runtime.getRuntime().availableProcessors()
+        if (count == null) return Runtime.getRuntime().availableProcessors()
         cachedCoreCount = count
         return count
     }
 
-    // cpu0 usually has no "online" node (the boot core can't be offlined);
-    // cache the existence checks since each one is a root-shell round trip.
-    private val cachedCoreToggleable = HashMap<Int, Boolean>()
-    fun isCoreToggleable(core: Int): Boolean =
-        cachedCoreToggleable.getOrPut(core) { fileExists(coreOnlinePath(core)) }
+    fun coreOnlinePath(core: Int) = "/sys/devices/system/cpu/cpu$core/online"
 
-    fun readCoreOnline(core: Int): Boolean {
-        if (!isCoreToggleable(core)) return true
-        return readRaw(coreOnlinePath(core)) == "1"
+    // cpu0 usually has no "online" node (the boot core can't be offlined).
+    fun isCoreToggleable(core: Int): Boolean = exists(coreOnlinePath(core)) == true
+
+    /** Online state of every core; cores without an "online" node count as online. */
+    fun readAllCoresOnline(): List<Boolean> {
+        val n = cpuCoreCount()
+        val toggleable = (0 until n).map { isCoreToggleable(it) }
+        val values = readNodes((0 until n).filter { toggleable[it] }.map { coreOnlinePath(it) })
+        return (0 until n).map { core ->
+            if (!toggleable[core]) true else values[coreOnlinePath(core)]?.trim() == "1"
+        }
     }
 
-    fun readAllCoresOnline(): List<Boolean> =
-        (0 until cpuCoreCount()).map { readCoreOnline(it) }
+    // --- writes ---------------------------------------------------------
+
+    private const val WRITE_ATTEMPTS = 3
+    private const val SETTLE_MS = 40L
+    private const val RETRY_MS = 80L
+
+    private fun sameValue(readBack: String, wanted: String): Boolean {
+        val a = readBack.trim()
+        val b = wanted.trim()
+        if (a == b) return true
+        val na = a.toLongOrNull()
+        val nb = b.toLongOrNull()
+        return na != null && na == nb
+    }
+
+    /** How nodes are read and written. Replaced by a fake kernel in tests. */
+    internal interface NodeIO {
+        fun read(path: String): String
+        fun write(path: String, value: String): Boolean
+    }
+
+    private object ShellNodeIO : NodeIO {
+        override fun read(path: String): String = SysReader.read(path)
+        override fun write(path: String, value: String): Boolean = RootFile.writeFile(path, value)
+    }
+
+    @Volatile
+    internal var nodes: NodeIO = ShellNodeIO
+
+    @Volatile
+    internal var sleeper: (Long) -> Unit = { ms ->
+        try {
+            Thread.sleep(ms)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
+    /** Writes [value] to [path] and confirms it by reading the node back. */
+    fun writeVerified(path: String, value: String): WriteResult {
+        for (attempt in 0 until WRITE_ATTEMPTS) {
+            nodes.write(path, value)
+            sleeper(SETTLE_MS)
+            if (sameValue(nodes.read(path), value)) return WriteResult.OK
+            if (attempt < WRITE_ATTEMPTS - 1) sleeper(RETRY_MS * (attempt + 1))
+        }
+        return WriteResult.FAILED
+    }
+
+    private fun readLong(path: String): Long? = nodes.read(path).trim().toLongOrNull()
+
+    /**
+     * Sets a max limit. If it is below the current min, the min is lowered to
+     * the same value first so the kernel accepts it.
+     */
+    private fun setMax(minPath: String, maxPath: String, value: Int): WriteResult {
+        val curMin = readLong(minPath)
+        if (curMin != null && value < curMin) writeVerified(minPath, value.toString())
+        return writeVerified(maxPath, value.toString())
+    }
+
+    /**
+     * Sets a min limit. If it is above the current max, the max is raised to
+     * the same value first so the kernel accepts it.
+     */
+    private fun setMin(minPath: String, maxPath: String, value: Int): WriteResult {
+        val curMax = readLong(maxPath)
+        if (curMax != null && value > curMax) writeVerified(maxPath, value.toString())
+        return writeVerified(minPath, value.toString())
+    }
+
+    fun setCpuMaxKHz(paths: ClusterPaths, khz: Int): WriteResult = setMax(paths.minFreq, paths.maxFreq, khz)
+
+    fun setCpuMinKHz(paths: ClusterPaths, khz: Int): WriteResult = setMin(paths.minFreq, paths.maxFreq, khz)
+
+    fun setGpuMaxMHz(mhz: Int): WriteResult = setMax(MIN_FREQ_GPU, MAX_FREQ_GPU, mhz)
+
+    fun setGpuMinMHz(mhz: Int): WriteResult = setMin(MIN_FREQ_GPU, MAX_FREQ_GPU, mhz)
+
+    fun writeGovernor(path: String, governor: String): WriteResult = writeVerified(path, governor)
+
+    fun writeIntNode(path: String, value: Int): WriteResult = writeVerified(path, value.toString())
+
+    fun writeAdrenoBoost(value: Int): WriteResult = writeVerified(ADRENO_BOOST, value.toString())
+
+    fun writeThrottling(enabled: Boolean): WriteResult = writeVerified(GPU_THROTTLING, if (enabled) "1" else "0")
+
+    fun writeCpuInputBoostMs(ms: Int): WriteResult = writeVerified(CPU_INPUT_BOOST_MS, ms.toString())
+
+    fun writeCpuSchedBoostOnInput(enabled: Boolean): WriteResult =
+        writeVerified(CPU_SCHED_BOOST_ON_INPUT, if (enabled) "1" else "0")
 
     fun writeCoreOnline(core: Int, online: Boolean): WriteResult =
-        writeNode(coreOnlinePath(core), if (online) "1" else "0")
+        writeVerified(coreOnlinePath(core), if (online) "1" else "0")
 }

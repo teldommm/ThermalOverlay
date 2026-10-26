@@ -1,19 +1,27 @@
 /**
- * Reads the SoC platform name (ro.board.platform) via shell.
+ * Reads the SoC platform name (ro.board.platform). getprop needs no root, so
+ * this works before (or without) a root grant.
  */
 package com.thermaloverlay.overlay.metrics
 
-import com.thermaloverlay.overlay.shell.KeepShellPublic
+object PlatformUtils {
+    @Volatile
+    private var cpu: String? = null
 
-class PlatformUtils {
-    companion object {
-        private var cpu: String? = null
-    }
-
+    /** "" if it couldn't be read; only a real answer is cached. */
     fun getCPUName(): String {
-        if (cpu == null) {
-            cpu = KeepShellPublic.doCmdSync("getprop ro.board.platform").trim()
+        cpu?.let { return it }
+        val value = try {
+            val p = ProcessBuilder("getprop", "ro.board.platform").redirectErrorStream(true).start()
+            val text = p.inputStream.bufferedReader().use { it.readText() }.trim()
+            p.waitFor()
+            text
+        } catch (ex: Exception) {
+            ""
         }
-        return cpu ?: ""
+        if (value.isNotEmpty()) cpu = value
+        return value
     }
+
+    fun isMtk(): Boolean = getCPUName().startsWith("mt")
 }

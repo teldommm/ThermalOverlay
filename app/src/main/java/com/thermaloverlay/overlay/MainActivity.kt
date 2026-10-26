@@ -5,7 +5,9 @@
  */
 package com.thermaloverlay.overlay
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,10 +19,16 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.thermaloverlay.overlay.freqcontrol.FreqControlActivity
-import com.thermaloverlay.overlay.shell.KeepShellPublic
-import com.thermaloverlay.overlay.ui.FloatMonitor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
@@ -32,8 +40,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var freqControlButton: Button
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var stateJob: Job? = null
+    private var rootJob: Job? = null
+    private var rootChecking = false
 
-    private var hasRoot: Boolean? = null
+    // Asked once per click; the overlay starts whatever the answer is — the
+    // notification is only a convenience (stop button), not a requirement.
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { startOverlayService() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,61 +69,68 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, FreqControlActivity::class.java))
         }
 
+        dualBatterySwitch.isChecked = OverlayPrefs.isDualBattery(this)
         dualBatterySwitch.setOnCheckedChangeListener { _, checked ->
             OverlayPrefs.setDualBattery(this, checked)
         }
 
-        checkRootAccess()
+        if (!RootState.isGranted) checkRootAccess(retryNow = false)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Follows the real service state, so the screen also updates when the
+        // overlay is closed from the HUD, the tile or the notification.
+        stateJob = scope.launch {
+            OverlayState.running.collect { refreshUi() }
+        }
+        rootJob = scope.launch {
+            RootState.granted.collect { refreshUi() }
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        reconcileOverlayState()
+        // The overlay permission can be granted while we are in Settings.
         refreshUi()
     }
 
-    // OverlayPrefs.isEnabled() is only reliable when the service got to clean
-    // up after itself. A force-stop, an OOM kill, or a crash takes the whole
-    // process down without ever running OverlayService.onDestroy(), so the
-    // flag can be stuck on "true" forever. OverlayService.isRunning defaults
-    // to false on every fresh process start, so this catches exactly that
-    // case and self-corrects.
-    //
-    // Deliberately NOT called from refreshUi() itself: onStartClicked() calls
-    // refreshUi() synchronously right after starting the service, and
-    // OverlayService.onCreate() hasn't run yet at that point — isRunning
-    // would still read false and this would immediately wipe the flag we
-    // just set to true. onResume() never fires in that same synchronous
-    // window, so it doesn't race with a start that's still in flight.
-    private fun reconcileOverlayState() {
-        if (OverlayPrefs.isEnabled(this) && !OverlayService.isRunning) {
-            OverlayPrefs.setEnabled(this, false)
-        }
+    override fun onStop() {
+        stateJob?.cancel()
+        stateJob = null
+        rootJob?.cancel()
+        rootJob = null
+        super.onStop()
     }
 
-    private fun checkRootAccess() {
-        rootWarningText.text = getString(R.string.root_checking)
-        rootWarning.visibility = View.VISIBLE
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    private fun checkRootAccess(retryNow: Boolean) {
+        rootChecking = true
+        refreshUi()
 
         Thread {
-            val result = try {
-                KeepShellPublic.checkRoot()
-            } catch (ex: Exception) {
-                false
-            }
+            RootState.check(retryNow)
             mainHandler.post {
-                hasRoot = result
-                rootWarning.visibility = if (result) View.GONE else View.VISIBLE
-                rootWarningText.text = getString(R.string.root_warning)
+                if (isDestroyed) return@post
+                rootChecking = false
+                refreshUi()
             }
         }.start()
     }
 
-    private fun hasOverlayPermission(): Boolean {
-        return Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)
-    }
+    private fun hasOverlayPermission(): Boolean = Settings.canDrawOverlays(this)
 
     private fun onStartClicked() {
+        // No root = no overlay. The button turns into "check again" in that case.
+        if (!RootState.isGranted) {
+            checkRootAccess(retryNow = true)
+            return
+        }
+
         if (!hasOverlayPermission()) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -118,41 +140,52 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (OverlayPrefs.isEnabled(this) || FloatMonitor.show) {
-            refreshUi()
-            return
-        }
+        if (OverlayState.isRunning) return
 
-        val serviceIntent = Intent(this, OverlayService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            startService(serviceIntent)
+            startOverlayService()
         }
-        OverlayPrefs.setEnabled(this, true)
-        refreshUi()
+    }
+
+    private fun startOverlayService() {
+        if (OverlayState.isRunning) return
+        startForegroundService(Intent(this, OverlayService::class.java))
     }
 
     private fun onStopClicked() {
         stopService(Intent(this, OverlayService::class.java))
-        OverlayPrefs.setEnabled(this, false)
-        refreshUi()
     }
 
     private fun refreshUi() {
+        val enabled = OverlayState.isRunning
+        val root = RootState.granted.value
         val hasPermission = hasOverlayPermission()
-        val enabled = OverlayPrefs.isEnabled(this)
+
+        // The banner is shown while checking and whenever root is missing.
+        rootWarning.visibility = if (rootChecking || root != true) View.VISIBLE else View.GONE
+        rootWarningText.text = getString(if (rootChecking) R.string.root_checking else R.string.root_warning)
 
         statusText.text = when {
-            !hasPermission -> getString(R.string.status_no_permission)
             enabled -> getString(R.string.status_enabled)
+            root == false -> getString(R.string.status_no_root)
+            !hasPermission -> getString(R.string.status_no_permission)
             else -> getString(R.string.status_disabled)
         }
 
-        startButton.isEnabled = !enabled
-        startButton.text = if (!hasPermission) getString(R.string.grant_permission) else getString(R.string.start_overlay)
+        startButton.isEnabled = !enabled && !rootChecking
+        startButton.text = when {
+            root != true -> getString(R.string.check_root_again)
+            !hasPermission -> getString(R.string.grant_permission)
+            else -> getString(R.string.start_overlay)
+        }
         stopButton.isEnabled = enabled
 
-        dualBatterySwitch.isChecked = OverlayPrefs.isDualBattery(this)
+        freqControlButton.isEnabled = root == true
+        freqControlButton.alpha = if (root == true) 1f else 0.4f
     }
 }

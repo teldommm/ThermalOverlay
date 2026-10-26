@@ -11,7 +11,10 @@
     <string name="status_disabled">Оверлей выключен</string>
     <string name="status_no_permission">Нужно разрешение "Поверх других окон"</string>
 
-    <string name="root_warning">Root-доступ не обнаружен. Оверлей не сможет получать данные CPU/GPU/DDR — все метрики читаются через root-shell.</string>
+    <string name="root_warning">Нужен root-доступ — без него приложение не работает. Выдайте root для ThermalOverlay в менеджере root (Magisk / KernelSU и т.п.) и нажмите «Проверить root снова».</string>
+    <string name="status_no_root">Нужен root-доступ</string>
+    <string name="check_root_again">Проверить root снова</string>
+    <string name="root_required_toast">Для работы ThermalOverlay нужен root-доступ</string>
     <string name="root_checking">Проверка root-доступа…</string>
 
     <string name="dual_battery_label">Двойная батарея</string>
@@ -20,6 +23,9 @@
     <string name="notification_channel_name">ThermalOverlay HUD</string>
     <string name="notification_title">Оверлей производительности активен</string>
     <string name="tile_label">Оверлей</string>
+    <string name="overlay_error">Не удалось показать оверлей: %1$s</string>
+
+    <string name="hud_loading">Загрузка…</string>
 
     <string name="freq_control_button">Регуляция частот (Qualcomm)</string>
     <string name="freq_control_title">Регуляция частот</string>
@@ -56,5 +62,5 @@
     <string name="freq_core_last_toast">Нельзя отключить последнее активное ядро</string>
 
     <string name="freq_applied_toast">Применено</string>
-    <string name="freq_write_failed_toast">Не удалось применить (узел read-only)</string>
+    <string name="freq_write_failed_toast">Не удалось применить (значение отклонено или перезаписано системой)</string>
 </resources>

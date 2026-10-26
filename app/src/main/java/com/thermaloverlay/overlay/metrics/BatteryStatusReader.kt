@@ -8,7 +8,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
-import com.thermaloverlay.overlay.shell.KeepShellPublic
+import com.thermaloverlay.overlay.shell.SysReader
 
 object BatteryStatusReader {
     var batteryCapacity = -1
@@ -19,7 +19,8 @@ object BatteryStatusReader {
     var batteryVoltage = -1.0
         private set
 
-    var temperatureCurrent = -1.0
+    /** Battery temperature in °C, NaN until the first valid reading. */
+    var temperatureCurrent = Double.NaN
         private set
 
     var currentUnitDivisor = -1000
@@ -56,7 +57,7 @@ object BatteryStatusReader {
                 divisorCalibrated = true
             }
             else -> {
-
+                // Not charging/discharging yet: keep the default and calibrate later.
             }
         }
     }
@@ -79,46 +80,54 @@ object BatteryStatusReader {
             val capacity = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
             if (capacity in 0..100) batteryCapacity = capacity
 
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                val status = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS)
-                if (status != Int.MIN_VALUE) batteryStatus = status
-            }
+            val status = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS)
+            if (status != Int.MIN_VALUE) batteryStatus = status
 
             calibrateCurrentUnitDivisor(batteryManager)
         }
 
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val tempTenths = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
-        if (tempTenths > 0) {
+        val tempTenths = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE
+        if (tempTenths != Int.MIN_VALUE) {
             val celsius = tempTenths / 10.0
-            if (celsius > 10 && celsius < 100) temperatureCurrent = celsius
+            // Sanity range only; a cold phone (< 10 °C) is a perfectly valid reading.
+            if (celsius > -40 && celsius < 120) temperatureCurrent = celsius
         }
 
-        readVoltage()?.let { batteryVoltage = it }
+        val volts = readVoltage() ?: intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0)
+            ?.takeIf { it > 0 }?.let { it / 1000.0 }
+        volts?.let { batteryVoltage = it }
 
         lastUpdateTime = System.currentTimeMillis()
     }
 
     private fun readVoltage(): Double? {
-        val path = voltagePath ?: run {
-            val found = voltagePathCandidates.firstOrNull { candidate ->
-                val value = KeepShellPublic.doCmdSync("cat $candidate 2>/dev/null").trim()
-                value.isNotEmpty() && value.length >= 2 && value.all { it.isDigit() }
+        var path = voltagePath
+        if (path == null) {
+            // Probe once; remember the answer only if every candidate was
+            // actually read (a shell failure must not disable this for good).
+            var found = ""
+            for (candidate in voltagePathCandidates) {
+                val value = SysReader.readOrNull(candidate) ?: return null
+                if (parseVoltage(value) != null) {
+                    found = candidate
+                    break
+                }
             }
-            voltagePath = found ?: ""
-            found
+            voltagePath = found
+            path = found
         }
-        if (path.isNullOrEmpty()) return null
+        if (path.isEmpty()) return null
+        return parseVoltage(SysReader.read(path))
+    }
 
-        val raw = KeepShellPublic.doCmdSync("cat $path 2>/dev/null").trim()
-        if (raw.length < 2) return null
-
-        return try {
-            val trimmed = if (raw.length > 4) raw.substring(0, 4) else raw
-            val withDecimal = trimmed.substring(0, 1) + "." + trimmed.substring(1)
-            withDecimal.toDoubleOrNull()
-        } catch (ex: Exception) {
-            null
+    /** Accepts µV ("4123456") and mV ("4123") readings; returns volts. */
+    internal fun parseVoltage(raw: String): Double? {
+        val v = raw.trim().toLongOrNull() ?: return null
+        return when {
+            v > 100_000 -> v / 1_000_000.0
+            v > 1_000 -> v / 1_000.0
+            else -> null
         }
     }
 }

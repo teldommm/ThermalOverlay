@@ -1,49 +1,33 @@
 // JNI implementation backing NativeKernelProp: reads a numeric sysfs value
 // directly via fopen/fscanf, bypassing the root shell. Used on the hot path
-// (CpuFrequencyUtils.getCurrentFrequency).
+// (CpuFrequencyUtils.getClusterFrequencyKHz).
 
 #include <jni.h>
-#include <string>
-#include <cstdlib>
-#include <cstring>
-
-char* jstringToChar(JNIEnv* env, jstring jstr) {
-    char* rtn = nullptr;
-    jclass clsstring = env->FindClass("java/lang/String");
-    jstring strencode = env->NewStringUTF("GB2312");
-    jmethodID mid = env->GetMethodID(clsstring, "getBytes", "(Ljava/lang/String;)[B");
-    auto barr = (jbyteArray) env->CallObjectMethod(jstr, mid, strencode);
-    jsize alen = env->GetArrayLength(barr);
-    jbyte* ba = env->GetByteArrayElements(barr, JNI_FALSE);
-    if (alen > 0) {
-        rtn = (char*) malloc(alen + 1);
-        memcpy(rtn, ba, alen);
-        rtn[alen] = 0;
-    }
-    env->ReleaseByteArrayElements(barr, ba, 0);
-    return rtn;
-}
+#include <cstdio>
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_thermaloverlay_overlay_shell_NativeKernelProp_getKernelPropLong(
         JNIEnv *env,
-        jobject,
+        jobject /* thiz */,
         jstring path) {
-    char* charData = jstringToChar(env, path);
-    if (charData == nullptr) {
+    if (path == nullptr) {
         return -1;
     }
 
-    FILE *kernelProp = fopen(charData, "r");
-    free(charData);
+    const char *chars = env->GetStringUTFChars(path, nullptr);
+    if (chars == nullptr) {
+        return -1;  // OutOfMemoryError is already pending
+    }
+    FILE *kernelProp = fopen(chars, "re");
+    env->ReleaseStringUTFChars(path, chars);
     if (kernelProp == nullptr) {
         return -1;
     }
 
-    long freq = -1;
-    if (fscanf(kernelProp, "%ld", &freq) != 1) {
-        freq = -1;
+    long long value = -1;
+    if (fscanf(kernelProp, "%lld", &value) != 1) {
+        value = -1;
     }
     fclose(kernelProp);
-    return freq;
+    return static_cast<jlong>(value);
 }

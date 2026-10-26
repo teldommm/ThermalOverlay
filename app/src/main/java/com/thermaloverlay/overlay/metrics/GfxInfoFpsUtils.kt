@@ -16,7 +16,7 @@ class GfxInfoFpsUtils(private val keepShell: KeepShell) {
 
     @Synchronized
     fun getFps(): Float? {
-        val packageName = getTopPackageName() ?: return null
+        val packageName = ForegroundApp.get(keepShell) ?: return null
         if (packageName != lastActivePackage) {
             lastActivePackage = packageName
             frameTimeBuffer.clear()
@@ -27,7 +27,7 @@ class GfxInfoFpsUtils(private val keepShell: KeepShell) {
         }
 
         val output = keepShell.doCmdSync("dumpsys gfxinfo $packageName framestats")
-        if (output.isEmpty() || output == "error") return null
+        if (output.isEmpty() || output == KeepShell.ERROR) return null
 
         val lines = output.split("\n")
         if (gfxColumnIndex == -1) {
@@ -63,16 +63,5 @@ class GfxInfoFpsUtils(private val keepShell: KeepShell) {
 
         if (frameTimeBuffer.isEmpty()) return null
         return frameTimeBuffer.size.toFloat()
-    }
-
-    private fun getTopPackageName(): String? {
-        val line = keepShell.doCmdSync("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'").trim()
-        return parsePackageFromDump(line)
-    }
-
-    private fun parsePackageFromDump(line: String): String? {
-        if (line.isEmpty() || line == "error") return null
-        val match = Regex("([a-zA-Z0-9._-]+)/").find(line) ?: return null
-        return match.groupValues[1]
     }
 }

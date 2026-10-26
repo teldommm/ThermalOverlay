@@ -1,6 +1,19 @@
 /**
  * Screen for adjusting CPU cluster (little/big/prime) and GPU frequencies,
  * governors, and related tunables.
+ *
+ * Why this screen is built the way it is (it fixes "I have to pick the
+ * frequency again"):
+ *  - ALL root I/O (initial load, periodic refresh, user writes) goes through a
+ *    single-thread executor, so writes are applied in the order they were
+ *    chosen and a refresh never interleaves with a write.
+ *  - The periodic refresh is not allowed to touch the controls while a user
+ *    write is pending, nor if the user changed something after the refresh
+ *    started (see [uiEpoch] / [writesInFlight]); otherwise a refresh that read
+ *    the OLD value would snap the spinner back right after the user's choice.
+ *  - If the real value isn't in the list (kernel/thermal clamp), it is added to
+ *    the list instead of showing the nearest entry — otherwise the entry the
+ *    user wants is already "selected" and re-selecting it fires no event.
  */
 package com.thermaloverlay.overlay.freqcontrol
 
@@ -21,6 +34,11 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.thermaloverlay.overlay.R
+import com.thermaloverlay.overlay.RootState
+import com.thermaloverlay.overlay.metrics.CpuCyclesUtils
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 class FreqControlActivity : AppCompatActivity() {
 
@@ -40,6 +58,11 @@ class FreqControlActivity : AppCompatActivity() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // The one and only place where root I/O happens for this screen.
+    private val io: ExecutorService = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "FreqControlIO").apply { isDaemon = true }
+    }
+
     private data class Detection(
         val hasBigCluster: Boolean,
         val bigPolicy: Int,
@@ -48,6 +71,7 @@ class FreqControlActivity : AppCompatActivity() {
         val hasCpuInputBoostMs: Boolean,
         val hasCpuSchedBoostOnInput: Boolean,
         val coreCount: Int,
+        val coreToggleable: List<Boolean>,
     )
 
     private val clusterHolders = mutableListOf<ClusterHolder>()
@@ -56,6 +80,7 @@ class FreqControlActivity : AppCompatActivity() {
     private var coreRoot: View? = null
     private val coreViews = mutableListOf<TextView>()
     private var coreOnlineState: List<Boolean> = emptyList()
+    private var coreToggleable: List<Boolean> = emptyList()
 
     private var gpuMinController: SpinnerController<Int>? = null
     private var gpuMaxController: SpinnerController<Int>? = null
@@ -68,12 +93,35 @@ class FreqControlActivity : AppCompatActivity() {
     private var cpuBoostInputEditRef: EditText? = null
     private var cpuBoostSchedController: SwitchController? = null
 
+    // --- write / refresh coordination (main thread unless noted) ---
+
+    /** Bumped whenever the user starts a write. Thread-safe. */
+    private val uiEpoch = AtomicInteger(0)
+
+    /** User writes submitted but not yet fully read back. */
+    private var writesInFlight = 0
+
     private val liveRefreshIntervalMs = 2000L
     private var liveRefreshRunning = false
+
+    /** Bumped on pause/resume so a refresh that finishes late can't start a second chain. */
+    private var liveGeneration = 0
     private val liveRefreshRunnable = Runnable { refreshLiveStateAsync() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Nothing here works without root.
+        if (RootState.granted.value == false) {
+            Toast.makeText(this, R.string.root_required_toast, Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
+        if (RootState.granted.value == null) {
+            // Process was restarted while this screen was open.
+            Thread {
+                if (!RootState.check()) runOnUiThread { finish() }
+            }.start()
+        }
         setContentView(R.layout.activity_freq_control)
 
         val clusterContainer = findViewById<LinearLayout>(R.id.cluster_container)
@@ -81,9 +129,9 @@ class FreqControlActivity : AppCompatActivity() {
         val coreContainer = findViewById<LinearLayout>(R.id.core_container)
         val gpuContainer = findViewById<LinearLayout>(R.id.gpu_container)
 
-        Thread({
-
+        io.execute {
             val detection = try {
+                val n = FreqControlUtils.cpuCoreCount()
                 Detection(
                     hasBigCluster = FreqControlUtils.hasBigCluster(),
                     bigPolicy = FreqControlUtils.detectBigPolicy(),
@@ -91,35 +139,46 @@ class FreqControlActivity : AppCompatActivity() {
                     hasGpu = FreqControlUtils.hasGpu(),
                     hasCpuInputBoostMs = FreqControlUtils.hasCpuInputBoostMs(),
                     hasCpuSchedBoostOnInput = FreqControlUtils.hasCpuSchedBoostOnInput(),
-                    coreCount = FreqControlUtils.cpuCoreCount(),
+                    coreCount = n,
+                    coreToggleable = (0 until n).map { FreqControlUtils.isCoreToggleable(it) },
                 )
             } catch (ex: Exception) {
                 Detection(
                     hasBigCluster = false, bigPolicy = 0, hasPrimeCluster = false,
                     hasGpu = false, hasCpuInputBoostMs = false, hasCpuSchedBoostOnInput = false,
-                    coreCount = 0,
+                    coreCount = 0, coreToggleable = emptyList(),
                 )
             }
             mainHandler.post {
+                if (isFinishing || isDestroyed) return@post
                 buildClusterCards(clusterContainer, detection)
                 buildCpuBoostCard(cpuBoostContainer, detection)
                 buildCoreCard(coreContainer, detection)
                 buildGpuCard(gpuContainer, detection)
                 loadAllAsync()
             }
-        }).start()
+        }
     }
 
     override fun onResume() {
         super.onResume()
         liveRefreshRunning = true
+        liveGeneration++
+        mainHandler.removeCallbacks(liveRefreshRunnable)
         mainHandler.post(liveRefreshRunnable)
     }
 
     override fun onPause() {
         super.onPause()
         liveRefreshRunning = false
+        liveGeneration++
         mainHandler.removeCallbacks(liveRefreshRunnable)
+    }
+
+    override fun onDestroy() {
+        // Queued writes still run to completion; nothing new is accepted.
+        io.shutdown()
+        super.onDestroy()
     }
 
     private fun buildClusterCards(container: LinearLayout, detection: Detection) {
@@ -130,7 +189,6 @@ class FreqControlActivity : AppCompatActivity() {
         }
 
         if (detection.hasBigCluster) {
-
             FreqControlUtils.pathsFor(FreqControlUtils.Cluster.BIG)?.let { paths ->
                 val title = getString(R.string.cluster_big_title, detection.bigPolicy)
                 addClusterCard(container, inflater, paths, title)
@@ -138,7 +196,6 @@ class FreqControlActivity : AppCompatActivity() {
         }
 
         if (detection.hasPrimeCluster) {
-
             FreqControlUtils.pathsFor(FreqControlUtils.Cluster.PRIME)?.let { paths ->
                 addClusterCard(container, inflater, paths, getString(R.string.cluster_prime_title))
             }
@@ -167,6 +224,7 @@ class FreqControlActivity : AppCompatActivity() {
 
     private fun buildCoreCard(container: LinearLayout, detection: Detection) {
         if (detection.coreCount <= 1) return
+        coreToggleable = detection.coreToggleable
         val view = LayoutInflater.from(this).inflate(R.layout.view_core_control, container, false)
         container.addView(view)
         coreRoot = view
@@ -184,123 +242,228 @@ class FreqControlActivity : AppCompatActivity() {
         cpuBoostRoot = view
     }
 
-    private fun loadAllAsync() {
-        Thread({
-            val snapshot = clusterHolders.map { holder ->
-                ClusterSnapshot(
-                    holder = holder,
-                    curFreq = FreqControlUtils.readFreqMHz(holder.paths.curFreq),
-                    // availFreq/curMinFreq/curMaxFreq are in kHz: spinner values must
-                    // round-trip to sysfs exactly, so no MHz conversion here.
-                    availFreq = FreqControlUtils.readAvailableFreqWithBoost(holder.paths.availFreq, holder.paths.availBoost),
-                    availGov = FreqControlUtils.readAvailableGovernors(holder.paths.availGov),
-                    curMinFreq = FreqControlUtils.readFreqKHz(holder.paths.minFreq),
-                    curMaxFreq = FreqControlUtils.readFreqKHz(holder.paths.maxFreq),
-                    curGov = FreqControlUtils.readGovernor(holder.paths.gov),
-                )
-            }
+    // ------------------------------------------------------------------
+    // Reading state (one shell round trip per read, whole screen at once)
+    // ------------------------------------------------------------------
 
-            val gpuSnapshot = if (gpuRoot != null) {
-                GpuSnapshot(
-                    curFreq = FreqControlUtils.readGpuFreqMHz(),
-                    availFreq = FreqControlUtils.readAvailableFreqGPU(),
-                    availGov = FreqControlUtils.readAvailableGovernors(FreqControlUtils.AVAIL_GOV_GPU),
-                    curMinFreq = FreqControlUtils.readGpuMinMax(FreqControlUtils.MIN_FREQ_GPU),
-                    curMaxFreq = FreqControlUtils.readGpuMinMax(FreqControlUtils.MAX_FREQ_GPU),
-                    curGov = FreqControlUtils.readGovernor(FreqControlUtils.GOV_GPU),
-                    curAdrenoBoost = FreqControlUtils.readAdrenoBoost(),
-                    minPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.MIN_PWRLEVEL),
-                    maxPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.MAX_PWRLEVEL),
-                    defaultPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.DEFAULT_PWRLEVEL),
-                    throttlingEnabled = FreqControlUtils.readThrottlingEnabled(),
-                )
-            } else {
-                null
+    private class StateRequest(
+        val clusterPaths: List<FreqControlUtils.ClusterPaths>,
+        val readGpu: Boolean,
+        val readCpuBoost: Boolean,
+        val coreOnlinePaths: List<Pair<Int, String>>,
+        val includeStatic: Boolean,
+    ) {
+        fun allPaths(): List<String> {
+            val p = LinkedHashSet<String>()
+            for (c in clusterPaths) {
+                p += c.curFreq; p += c.minFreq; p += c.maxFreq; p += c.gov
+                if (includeStatic) {
+                    p += c.availFreq; p += c.availGov
+                    c.availBoost?.let { p += it }
+                }
             }
-
-            val coreSnapshot = if (coreRoot != null) {
-                val n = FreqControlUtils.cpuCoreCount()
-                CoreSnapshot(
-                    online = FreqControlUtils.readAllCoresOnline(),
-                    toggleable = (0 until n).map { FreqControlUtils.isCoreToggleable(it) },
-                )
-            } else {
-                null
+            if (readGpu) {
+                p += FreqControlUtils.CUR_FREQ_GPU; p += FreqControlUtils.MIN_FREQ_GPU
+                p += FreqControlUtils.MAX_FREQ_GPU; p += FreqControlUtils.GOV_GPU
+                p += FreqControlUtils.ADRENO_BOOST; p += FreqControlUtils.MIN_PWRLEVEL
+                p += FreqControlUtils.MAX_PWRLEVEL; p += FreqControlUtils.DEFAULT_PWRLEVEL
+                p += FreqControlUtils.GPU_THROTTLING
+                if (includeStatic) {
+                    p += FreqControlUtils.AVAIL_FREQ_GPU; p += FreqControlUtils.AVAIL_GOV_GPU
+                }
             }
-
-            val cpuBoostSnapshot = if (cpuBoostRoot != null) {
-                CpuBoostSnapshot(
-                    inputBoostMs = FreqControlUtils.readIntNode(FreqControlUtils.CPU_INPUT_BOOST_MS),
-                    schedBoostEnabled = FreqControlUtils.readCpuSchedBoostOnInputEnabled(),
-                )
-            } else {
-                null
+            if (readCpuBoost) {
+                p += FreqControlUtils.CPU_INPUT_BOOST_MS; p += FreqControlUtils.CPU_SCHED_BOOST_ON_INPUT
             }
-
-            mainHandler.post {
-                snapshot.forEach { bindClusterSnapshot(it) }
-                coreSnapshot?.let { bindCoreSnapshot(it) }
-                gpuSnapshot?.let { bindGpuSnapshot(it) }
-                cpuBoostSnapshot?.let { bindCpuBoostSnapshot(it) }
-            }
-        }).start()
+            for ((_, path) in coreOnlinePaths) p += path
+            return p.toList()
+        }
     }
 
-    private data class ClusterSnapshot(
-        val holder: ClusterHolder,
-        val curFreq: Int,
-        val availFreq: List<Int>,
-        val availGov: List<String>,
-        val curMinFreq: Int,
-        val curMaxFreq: Int,
-        val curGov: String,
+    private fun buildRequest(includeStatic: Boolean) = StateRequest(
+        clusterPaths = clusterHolders.map { it.paths },
+        readGpu = gpuRoot != null,
+        readCpuBoost = cpuBoostRoot != null,
+        coreOnlinePaths = if (coreRoot != null) {
+            coreToggleable.mapIndexedNotNull { core, t -> if (t) core to FreqControlUtils.coreOnlinePath(core) else null }
+        } else {
+            emptyList()
+        },
+        includeStatic = includeStatic,
     )
 
-    private data class GpuSnapshot(
-        val curFreq: Int,
+    private class ClusterRead(
+        val curMHz: Int,
+        val minKHz: Int,
+        val maxKHz: Int,
+        val gov: String,
         val availFreq: List<Int>,
         val availGov: List<String>,
-        val curMinFreq: Int,
-        val curMaxFreq: Int,
-        val curGov: String,
-        val curAdrenoBoost: String,
+    )
+
+    private class GpuRead(
+        val curMHz: Int,
+        val minMHz: Int,
+        val maxMHz: Int,
+        val gov: String,
+        val adrenoBoost: Int,
         val minPwrlevel: Int?,
         val maxPwrlevel: Int?,
         val defaultPwrlevel: Int?,
-        val throttlingEnabled: Boolean,
+        val throttling: Boolean,
+        val availFreq: List<Int>,
+        val availGov: List<String>,
+        val rawAdrenoBoost: String,
     )
 
-    private data class CpuBoostSnapshot(
-        val inputBoostMs: Int?,
-        val schedBoostEnabled: Boolean,
+    private class CpuBoostRead(val inputBoostMs: Int?, val schedBoost: Boolean)
+
+    private class StateRead(
+        val clusters: List<ClusterRead>,
+        val gpu: GpuRead?,
+        val cpuBoost: CpuBoostRead?,
+        val coreOnline: List<Boolean>?,
     )
 
-    private data class CoreSnapshot(
-        val online: List<Boolean>,
-        val toggleable: List<Boolean>,
-    )
+    /** Runs on the io thread. */
+    private fun readState(req: StateRequest, coreCount: Int): StateRead {
+        val m = FreqControlUtils.readNodes(req.allPaths())
+        fun v(path: String): String = m[path]?.trim() ?: ""
 
-    private class SpinnerController<T>(
+        val clusters = req.clusterPaths.map { c ->
+            ClusterRead(
+                curMHz = FreqControlUtils.parseMHzFromKHz(v(c.curFreq)),
+                minKHz = FreqControlUtils.parseKHz(v(c.minFreq)),
+                maxKHz = FreqControlUtils.parseKHz(v(c.maxFreq)),
+                gov = v(c.gov),
+                // kHz end to end: spinner values must round-trip to sysfs exactly.
+                availFreq = if (req.includeStatic) {
+                    (FreqControlUtils.parseIntList(v(c.availFreq)) +
+                        (c.availBoost?.let { FreqControlUtils.parseIntList(v(it)) } ?: emptyList()))
+                        .distinct().sorted()
+                } else {
+                    emptyList()
+                },
+                availGov = if (req.includeStatic) FreqControlUtils.parseWordList(v(c.availGov)) else emptyList(),
+            )
+        }
+
+        val gpu = if (req.readGpu) {
+            val boostRaw = v(FreqControlUtils.ADRENO_BOOST)
+            GpuRead(
+                curMHz = FreqControlUtils.parseGpuCurMHz(v(FreqControlUtils.CUR_FREQ_GPU)),
+                minMHz = v(FreqControlUtils.MIN_FREQ_GPU).toIntOrNull() ?: 0,
+                maxMHz = v(FreqControlUtils.MAX_FREQ_GPU).toIntOrNull() ?: 0,
+                gov = v(FreqControlUtils.GOV_GPU),
+                adrenoBoost = boostRaw.toIntOrNull()?.coerceIn(0, 3) ?: 0,
+                minPwrlevel = v(FreqControlUtils.MIN_PWRLEVEL).toIntOrNull(),
+                maxPwrlevel = v(FreqControlUtils.MAX_PWRLEVEL).toIntOrNull(),
+                defaultPwrlevel = v(FreqControlUtils.DEFAULT_PWRLEVEL).toIntOrNull(),
+                throttling = v(FreqControlUtils.GPU_THROTTLING) == "1",
+                availFreq = if (req.includeStatic) {
+                    FreqControlUtils.parseIntList(v(FreqControlUtils.AVAIL_FREQ_GPU)).distinct().sorted()
+                } else {
+                    emptyList()
+                },
+                availGov = if (req.includeStatic) FreqControlUtils.parseWordList(v(FreqControlUtils.AVAIL_GOV_GPU)) else emptyList(),
+                rawAdrenoBoost = boostRaw,
+            )
+        } else {
+            null
+        }
+
+        val cpuBoost = if (req.readCpuBoost) {
+            CpuBoostRead(
+                inputBoostMs = v(FreqControlUtils.CPU_INPUT_BOOST_MS).toIntOrNull(),
+                schedBoost = v(FreqControlUtils.CPU_SCHED_BOOST_ON_INPUT) == "1",
+            )
+        } else {
+            null
+        }
+
+        val coreOnline = if (coreRootPresentFor(req)) {
+            val toggleableByCore = req.coreOnlinePaths.associate { it.first to it.second }
+            (0 until coreCount).map { core ->
+                val path = toggleableByCore[core]
+                if (path == null) true else v(path) == "1"
+            }
+        } else {
+            null
+        }
+
+        return StateRead(clusters, gpu, cpuBoost, coreOnline)
+    }
+
+    private fun coreRootPresentFor(req: StateRequest) = req.coreOnlinePaths.isNotEmpty()
+
+    private fun loadAllAsync() {
+        val req = buildRequest(includeStatic = true)
+        val coreCount = coreToggleable.size
+        io.execute {
+            val state = try {
+                readState(req, coreCount)
+            } catch (ex: Exception) {
+                return@execute
+            }
+            mainHandler.post {
+                if (isFinishing || isDestroyed) return@post
+                state.clusters.forEachIndexed { i, read ->
+                    clusterHolders.getOrNull(i)?.let { bindClusterSnapshot(it, read) }
+                }
+                state.coreOnline?.let { bindCoreSnapshot(it) }
+                    ?: run { if (coreRoot != null) bindCoreSnapshot(List(coreCount) { true }) }
+                state.gpu?.let { bindGpuSnapshot(it) }
+                state.cpuBoost?.let { bindCpuBoostSnapshot(it) }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Controls
+    // ------------------------------------------------------------------
+
+    /**
+     * A Spinner whose list can grow: a value that isn't in the list (clamped by
+     * the kernel / thermal) is inserted, so what the spinner shows is always
+     * the real value and every other entry can be selected (= fires an event).
+     */
+    private class SpinnerController<T : Comparable<T>>(
         private val spinner: Spinner,
-        private val values: List<T>,
+        private val adapter: ArrayAdapter<String>,
+        private val values: MutableList<T>,
+        private val labelOf: (T) -> String,
+        private val sorted: Boolean,
         initialIndex: Int,
-        // Optional fallback when the real value isn't in the list (e.g. the
-        // kernel clamped a frequency). Returns the index to select, or -1.
-        private val nearestIndex: ((T) -> Int)? = null,
     ) {
         var lastAppliedIndex: Int = initialIndex
             private set
 
         fun shouldWrite(position: Int): Boolean = position != lastAppliedIndex
 
+        fun valueAt(position: Int): T = values[position]
+
+        /** The user picked [position]; remember it so we don't write it twice. */
+        fun onUserSelected(position: Int) {
+            lastAppliedIndex = position
+        }
+
         fun applyRealValue(value: T) {
-            val exact = values.indexOf(value)
-            val idx = when {
-                exact >= 0 -> exact
-                else -> nearestIndex?.invoke(value)?.takeIf { it >= 0 } ?: lastAppliedIndex
-            }
+            var idx = values.indexOf(value)
+            if (idx < 0) idx = insert(value)
             lastAppliedIndex = idx
             spinner.setSelection(idx, false)
+        }
+
+        private fun insert(value: T): Int {
+            val pos = if (sorted) {
+                val p = values.indexOfFirst { it > value }
+                if (p < 0) values.size else p
+            } else {
+                values.size
+            }
+            values.add(pos, value)
+            adapter.insert(labelOf(value), pos)
+            return pos
         }
     }
 
@@ -312,16 +475,6 @@ class FreqControlActivity : AppCompatActivity() {
     ) {
         private var lastApplied = initialChecked
 
-        // Bumped on every manual toggle. The periodic poll (refreshLiveStateAsync)
-        // reads this node on a background thread that can take a while (many
-        // sequential root-shell round trips ahead of this field), so its result
-        // may reflect the state from *before* a manual write. It captures the
-        // epoch right before issuing its own read (see currentEpoch()) and must
-        // pass that same value back into applyRealValue; if a manual write
-        // started in between, the epoch will have moved and the stale poll
-        // result is dropped instead of snapping the switch back.
-        @Volatile private var epoch = 0
-
         init {
             switch.isChecked = initialChecked
             installListener()
@@ -330,21 +483,18 @@ class FreqControlActivity : AppCompatActivity() {
         private fun installListener() {
             switch.setOnCheckedChangeListener { _, checked ->
                 if (checked == lastApplied) return@setOnCheckedChangeListener
-                val myEpoch = ++epoch
-                writeInBackground(
+                lastApplied = checked
+                submitWrite(
                     action = { write(checked) },
                     afterWrite = {
                         val real = readBack()
-                        mainHandler.post { applyRealValue(real, myEpoch) }
+                        mainHandler.post { applyRealValue(real) }
                     },
                 )
             }
         }
 
-        fun currentEpoch(): Int = epoch
-
-        fun applyRealValue(value: Boolean, observedEpoch: Int = epoch) {
-            if (observedEpoch != epoch) return
+        fun applyRealValue(value: Boolean) {
             lastApplied = value
             if (switch.isChecked != value) {
                 switch.setOnCheckedChangeListener(null)
@@ -354,39 +504,41 @@ class FreqControlActivity : AppCompatActivity() {
         }
     }
 
-    private fun bindClusterSnapshot(s: ClusterSnapshot) {
-        s.holder.currentFreqView.text = getString(R.string.cluster_current_freq, s.curFreq)
+    private fun bindClusterSnapshot(holder: ClusterHolder, s: ClusterRead) {
+        holder.currentFreqView.text = getString(R.string.cluster_current_freq, s.curMHz)
 
         var minController: SpinnerController<Int>? = null
         var maxController: SpinnerController<Int>? = null
+        // After any min/max write BOTH bounds are re-read: setting a max below
+        // the min also moves the min (and the other way round).
         val refreshMinMax: () -> Unit = {
-            val minKhz = FreqControlUtils.readFreqKHz(s.holder.paths.minFreq)
-            val maxKhz = FreqControlUtils.readFreqKHz(s.holder.paths.maxFreq)
+            val minKhz = FreqControlUtils.readFreqKHz(holder.paths.minFreq)
+            val maxKhz = FreqControlUtils.readFreqKHz(holder.paths.maxFreq)
             mainHandler.post {
-                minController?.applyRealValue(minKhz)
-                maxController?.applyRealValue(maxKhz)
+                if (minKhz > 0) minController?.applyRealValue(minKhz)
+                if (maxKhz > 0) maxController?.applyRealValue(maxKhz)
             }
         }
-        minController = setupFreqSpinner(s.holder.minFreqSpinner, s.availFreq, s.curMinFreq, ::cpuFreqLabel, refreshMinMax) { khz ->
-            FreqControlUtils.writeFreqCPU(s.holder.paths.minFreq, khz)
+        minController = setupFreqSpinner(holder.minFreqSpinner, s.availFreq, s.minKHz, ::cpuFreqLabel, refreshMinMax) { khz ->
+            FreqControlUtils.setCpuMinKHz(holder.paths, khz)
         }
-        maxController = setupFreqSpinner(s.holder.maxFreqSpinner, s.availFreq, s.curMaxFreq, ::cpuFreqLabel, refreshMinMax) { khz ->
-            FreqControlUtils.writeFreqCPU(s.holder.paths.maxFreq, khz)
+        maxController = setupFreqSpinner(holder.maxFreqSpinner, s.availFreq, s.maxKHz, ::cpuFreqLabel, refreshMinMax) { khz ->
+            FreqControlUtils.setCpuMaxKHz(holder.paths, khz)
         }
-        s.holder.minController = minController
-        s.holder.maxController = maxController
+        holder.minController = minController
+        holder.maxController = maxController
 
         var govController: SpinnerController<String>? = null
-        govController = setupGovernorSpinner(s.holder.governorSpinner, s.availGov, s.curGov, {
-            val realGov = FreqControlUtils.readGovernor(s.holder.paths.gov)
-            mainHandler.post { govController?.applyRealValue(realGov) }
+        govController = setupGovernorSpinner(holder.governorSpinner, s.availGov, s.gov, {
+            val realGov = FreqControlUtils.readNodes(listOf(holder.paths.gov))[holder.paths.gov]?.trim() ?: ""
+            mainHandler.post { if (realGov.isNotEmpty()) govController?.applyRealValue(realGov) }
         }) { gov ->
-            FreqControlUtils.writeGovernor(s.holder.paths.gov, gov)
+            FreqControlUtils.writeGovernor(holder.paths.gov, gov)
         }
-        s.holder.govController = govController
+        holder.govController = govController
     }
 
-    private fun bindCoreSnapshot(s: CoreSnapshot) {
+    private fun bindCoreSnapshot(online: List<Boolean>) {
         val root = coreRoot ?: return
         val row = root.findViewById<LinearLayout>(R.id.core_toggle_container)
         row.removeAllViews()
@@ -396,8 +548,8 @@ class FreqControlActivity : AppCompatActivity() {
         val height = (40 * density).toInt()
         val margin = (3 * density).toInt()
 
-        s.online.indices.forEach { core ->
-            val toggleable = s.toggleable.getOrElse(core) { false }
+        online.indices.forEach { core ->
+            val toggleable = coreToggleable.getOrElse(core) { false }
             val tv = TextView(this).apply {
                 text = core.toString()
                 gravity = android.view.Gravity.CENTER
@@ -416,7 +568,7 @@ class FreqControlActivity : AppCompatActivity() {
             row.addView(tv, lp)
             coreViews.add(tv)
         }
-        applyCoreStates(s.online)
+        applyCoreStates(online)
     }
 
     private fun onCoreTapped(core: Int) {
@@ -429,13 +581,13 @@ class FreqControlActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.freq_core_last_toast, Toast.LENGTH_SHORT).show()
             return
         }
-        writeInBackground(
+        submitWrite(
             action = { FreqControlUtils.writeCoreOnline(core, target) },
             afterWrite = {
                 // simpleperf (per-core MHz in the overlay's detailed view)
                 // opens perf events once at launch and never picks up a
                 // re-onlined core — restart the stream after any hotplug.
-                com.thermaloverlay.overlay.metrics.CpuCyclesUtils.restartAfterCoreHotplug()
+                CpuCyclesUtils.restartAfterCoreHotplug()
                 val states = FreqControlUtils.readAllCoresOnline()
                 mainHandler.post { applyCoreStates(states) }
             },
@@ -451,63 +603,68 @@ class FreqControlActivity : AppCompatActivity() {
         }
     }
 
-    private fun bindGpuSnapshot(s: GpuSnapshot) {
+    private fun bindGpuSnapshot(s: GpuRead) {
         val root = gpuRoot ?: return
         root.findViewById<TextView>(R.id.gpu_current_freq).text =
-            getString(R.string.cluster_current_freq, s.curFreq)
+            getString(R.string.cluster_current_freq, s.curMHz)
 
         var minController: SpinnerController<Int>? = null
         var maxController: SpinnerController<Int>? = null
         val refreshMinMax: () -> Unit = {
-            val minMhz = FreqControlUtils.readGpuMinMax(FreqControlUtils.MIN_FREQ_GPU)
-            val maxMhz = FreqControlUtils.readGpuMinMax(FreqControlUtils.MAX_FREQ_GPU)
+            val minMhz = FreqControlUtils.readIntNode(FreqControlUtils.MIN_FREQ_GPU) ?: 0
+            val maxMhz = FreqControlUtils.readIntNode(FreqControlUtils.MAX_FREQ_GPU) ?: 0
             mainHandler.post {
-                minController?.applyRealValue(minMhz)
-                maxController?.applyRealValue(maxMhz)
+                if (minMhz > 0) minController?.applyRealValue(minMhz)
+                if (maxMhz > 0) maxController?.applyRealValue(maxMhz)
             }
         }
-        minController = setupFreqSpinner(root.findViewById(R.id.gpu_spinner_min_freq), s.availFreq, s.curMinFreq, ::gpuFreqLabel, refreshMinMax) { mhz ->
-            FreqControlUtils.writeFreqGPU(FreqControlUtils.MIN_FREQ_GPU, mhz)
+        minController = setupFreqSpinner(root.findViewById(R.id.gpu_spinner_min_freq), s.availFreq, s.minMHz, ::gpuFreqLabel, refreshMinMax) { mhz ->
+            FreqControlUtils.setGpuMinMHz(mhz)
         }
-        maxController = setupFreqSpinner(root.findViewById(R.id.gpu_spinner_max_freq), s.availFreq, s.curMaxFreq, ::gpuFreqLabel, refreshMinMax) { mhz ->
-            FreqControlUtils.writeFreqGPU(FreqControlUtils.MAX_FREQ_GPU, mhz)
+        maxController = setupFreqSpinner(root.findViewById(R.id.gpu_spinner_max_freq), s.availFreq, s.maxMHz, ::gpuFreqLabel, refreshMinMax) { mhz ->
+            FreqControlUtils.setGpuMaxMHz(mhz)
         }
         gpuMinController = minController
         gpuMaxController = maxController
 
         var gpuGovControllerLocal: SpinnerController<String>? = null
-        gpuGovControllerLocal = setupGovernorSpinner(root.findViewById(R.id.gpu_spinner_governor), s.availGov, s.curGov, {
-            val realGov = FreqControlUtils.readGovernor(FreqControlUtils.GOV_GPU)
-            mainHandler.post { gpuGovControllerLocal?.applyRealValue(realGov) }
+        gpuGovControllerLocal = setupGovernorSpinner(root.findViewById(R.id.gpu_spinner_governor), s.availGov, s.gov, {
+            val realGov = FreqControlUtils.readNodes(listOf(FreqControlUtils.GOV_GPU))[FreqControlUtils.GOV_GPU]?.trim() ?: ""
+            mainHandler.post { if (realGov.isNotEmpty()) gpuGovControllerLocal?.applyRealValue(realGov) }
         }) { gov ->
             FreqControlUtils.writeGovernor(FreqControlUtils.GOV_GPU, gov)
         }
         gpuGovController = gpuGovControllerLocal
 
-        val boostLabels = listOf(
+        val boostLabels = mutableListOf(
             getString(R.string.freq_adreno_boost_off),
             getString(R.string.freq_adreno_boost_low),
             getString(R.string.freq_adreno_boost_medium),
             getString(R.string.freq_adreno_boost_high),
         )
         val boostSpinner = root.findViewById<Spinner>(R.id.gpu_spinner_adreno_boost)
-        boostSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, boostLabels)
-        val curBoostIndex = s.curAdrenoBoost.toIntOrNull()?.coerceIn(0, 3) ?: 0
+        val boostAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, boostLabels)
+        boostSpinner.adapter = boostAdapter
+        val curBoostIndex = s.adrenoBoost
         boostSpinner.setSelection(curBoostIndex, false)
-        val boostValues = listOf(0, 1, 2, 3)
-        val boostController = SpinnerController(boostSpinner, boostValues, curBoostIndex)
+        val boostController = SpinnerController(
+            boostSpinner, boostAdapter, mutableListOf(0, 1, 2, 3), { it.toString() }, false, curBoostIndex,
+        )
         gpuBoostController = boostController
         boostSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (!boostController.shouldWrite(position)) return
-                writeInBackground(
+                boostController.onUserSelected(position)
+                submitWrite(
                     action = { FreqControlUtils.writeAdrenoBoost(position) },
                     afterWrite = {
-                        val real = FreqControlUtils.readAdrenoBoost().toIntOrNull()?.coerceIn(0, 3) ?: 0
+                        val real = FreqControlUtils.readNodes(listOf(FreqControlUtils.ADRENO_BOOST))[FreqControlUtils.ADRENO_BOOST]
+                            ?.trim()?.toIntOrNull()?.coerceIn(0, 3) ?: 0
                         mainHandler.post { boostController.applyRealValue(real) }
                     },
                 )
             }
+
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
@@ -537,16 +694,19 @@ class FreqControlActivity : AppCompatActivity() {
                 override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (fromUser) defaultValueView.text = (currentMaxPl + progress).toString()
                 }
+
                 override fun onStartTrackingTouch(sb: SeekBar?) {}
                 override fun onStopTrackingTouch(sb: SeekBar?) {
                     val value = currentMaxPl + (sb?.progress ?: 0)
-                    writeInBackground(
+                    submitWrite(
                         action = { FreqControlUtils.writeIntNode(FreqControlUtils.DEFAULT_PWRLEVEL, value) },
                         afterWrite = {
-
-                            val realMin = FreqControlUtils.readIntNode(FreqControlUtils.MIN_PWRLEVEL)
-                            val realMax = FreqControlUtils.readIntNode(FreqControlUtils.MAX_PWRLEVEL)
-                            val realDef = FreqControlUtils.readIntNode(FreqControlUtils.DEFAULT_PWRLEVEL)
+                            val m = FreqControlUtils.readNodes(
+                                listOf(FreqControlUtils.MIN_PWRLEVEL, FreqControlUtils.MAX_PWRLEVEL, FreqControlUtils.DEFAULT_PWRLEVEL)
+                            )
+                            val realMin = m[FreqControlUtils.MIN_PWRLEVEL]?.trim()?.toIntOrNull()
+                            val realMax = m[FreqControlUtils.MAX_PWRLEVEL]?.trim()?.toIntOrNull()
+                            val realDef = m[FreqControlUtils.DEFAULT_PWRLEVEL]?.trim()?.toIntOrNull()
                             mainHandler.post {
                                 if (realMin != null && realMax != null && realDef != null) {
                                     gpuPwrlevelApplyReal?.invoke(realMin, realMax, realDef)
@@ -557,7 +717,6 @@ class FreqControlActivity : AppCompatActivity() {
                 }
             })
         } else {
-
             boundsView.text = ""
             defaultValueView.text = "—"
             seekBar.isEnabled = false
@@ -567,13 +726,15 @@ class FreqControlActivity : AppCompatActivity() {
         val throttlingSwitch = root.findViewById<Switch>(R.id.switch_gpu_throttling)
         gpuThrottlingController = SwitchController(
             switch = throttlingSwitch,
-            initialChecked = s.throttlingEnabled,
+            initialChecked = s.throttling,
             write = { checked -> FreqControlUtils.writeThrottling(checked) },
-            readBack = { FreqControlUtils.readThrottlingEnabled() },
+            readBack = {
+                FreqControlUtils.readNodes(listOf(FreqControlUtils.GPU_THROTTLING))[FreqControlUtils.GPU_THROTTLING]?.trim() == "1"
+            },
         )
     }
 
-    private fun bindCpuBoostSnapshot(s: CpuBoostSnapshot) {
+    private fun bindCpuBoostSnapshot(s: CpuBoostRead) {
         val root = cpuBoostRoot ?: return
 
         val inputBoostEdit = root.findViewById<EditText>(R.id.edit_input_boost_ms)
@@ -582,8 +743,8 @@ class FreqControlActivity : AppCompatActivity() {
         cpuBoostInputEditRef = inputBoostEdit
         inputBoostButton.setOnClickListener {
             val value = inputBoostEdit.text.toString().toIntOrNull()
-            if (value != null) {
-                writeInBackground(
+            if (value != null && value >= 0) {
+                submitWrite(
                     action = { FreqControlUtils.writeCpuInputBoostMs(value) },
                     afterWrite = {
                         val real = FreqControlUtils.readIntNode(FreqControlUtils.CPU_INPUT_BOOST_MS)
@@ -598,9 +759,11 @@ class FreqControlActivity : AppCompatActivity() {
         val schedBoostSwitch = root.findViewById<Switch>(R.id.switch_sched_boost_on_input)
         cpuBoostSchedController = SwitchController(
             switch = schedBoostSwitch,
-            initialChecked = s.schedBoostEnabled,
+            initialChecked = s.schedBoost,
             write = { checked -> FreqControlUtils.writeCpuSchedBoostOnInput(checked) },
-            readBack = { FreqControlUtils.readCpuSchedBoostOnInputEnabled() },
+            readBack = {
+                FreqControlUtils.readNodes(listOf(FreqControlUtils.CPU_SCHED_BOOST_ON_INPUT))[FreqControlUtils.CPU_SCHED_BOOST_ON_INPUT]?.trim() == "1"
+            },
         )
     }
 
@@ -624,20 +787,26 @@ class FreqControlActivity : AppCompatActivity() {
             spinner.isEnabled = false
             return null
         }
-        val labels = available.map(labelOf)
-        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
-        val nearest: (Int) -> Int = { value ->
-            available.indices.minByOrNull { kotlin.math.abs(available[it] - value) } ?: -1
+        val values = available.toMutableList()
+        // Show the real value even if it's not in the table (e.g. clamped).
+        if (current > 0 && current !in values) {
+            val pos = values.indexOfFirst { it > current }.let { if (it < 0) values.size else it }
+            values.add(pos, current)
         }
-        val initialIndex = available.indexOf(current).let { if (it >= 0) it else nearest(current) }
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, values.map(labelOf).toMutableList())
+        spinner.adapter = adapter
+        val initialIndex = values.indexOf(current).let { if (it >= 0) it else 0 }
         spinner.setSelection(initialIndex, false)
 
-        val controller = SpinnerController(spinner, available, initialIndex, nearest)
+        val controller = SpinnerController(spinner, adapter, values, labelOf, true, initialIndex)
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (!controller.shouldWrite(position)) return
-                writeInBackground(action = { onSelected(available[position]) }, afterWrite = afterWrite)
+                controller.onUserSelected(position)
+                val value = controller.valueAt(position)
+                submitWrite(action = { onSelected(value) }, afterWrite = afterWrite)
             }
+
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
         return controller
@@ -655,127 +824,137 @@ class FreqControlActivity : AppCompatActivity() {
             spinner.isEnabled = false
             return null
         }
-        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, available)
-        val initialIndex = available.indexOf(current).let { if (it >= 0) it else 0 }
+        val values = available.toMutableList()
+        if (current.isNotEmpty() && current !in values) values.add(current)
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, values.toMutableList())
+        spinner.adapter = adapter
+        val initialIndex = values.indexOf(current).let { if (it >= 0) it else 0 }
         spinner.setSelection(initialIndex, false)
 
-        val controller = SpinnerController(spinner, available, initialIndex)
+        val controller = SpinnerController(spinner, adapter, values, { it }, false, initialIndex)
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (!controller.shouldWrite(position)) return
-                writeInBackground(action = { onSelected(available[position]) }, afterWrite = afterWrite)
+                controller.onUserSelected(position)
+                val value = controller.valueAt(position)
+                submitWrite(action = { onSelected(value) }, afterWrite = afterWrite)
             }
+
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
         return controller
     }
 
-    private fun writeInBackground(
+    // ------------------------------------------------------------------
+    // Writes
+    // ------------------------------------------------------------------
+
+    /**
+     * Queues a user change. [action] writes (verified) and [afterWrite] reads
+     * the real state back and posts it to the UI; both run on the io thread,
+     * strictly after every earlier write.
+     */
+    private fun submitWrite(
         action: () -> FreqControlUtils.WriteResult,
         afterWrite: () -> Unit = {},
     ) {
-        Thread({
-            val result = action()
-            afterWrite()
-            mainHandler.post {
-                val messageRes = when (result) {
-                    FreqControlUtils.WriteResult.OK -> R.string.freq_applied_toast
-                    FreqControlUtils.WriteResult.FAILED -> R.string.freq_write_failed_toast
+        uiEpoch.incrementAndGet()
+        writesInFlight++
+        try {
+            io.execute {
+                val result = try {
+                    action()
+                } catch (ex: Exception) {
+                    FreqControlUtils.WriteResult.FAILED
                 }
-                Toast.makeText(this, messageRes, Toast.LENGTH_SHORT).show()
+                try {
+                    afterWrite()
+                } catch (ex: Exception) {
+                    // the next refresh will resync the UI
+                }
+                mainHandler.post {
+                    writesInFlight--
+                    val messageRes = when (result) {
+                        FreqControlUtils.WriteResult.OK -> R.string.freq_applied_toast
+                        FreqControlUtils.WriteResult.FAILED -> R.string.freq_write_failed_toast
+                    }
+                    Toast.makeText(this, messageRes, Toast.LENGTH_SHORT).show()
+                }
             }
-        }).start()
+        } catch (ex: java.util.concurrent.RejectedExecutionException) {
+            writesInFlight--
+        }
     }
 
-    private data class ClusterLiveRead(val curFreq: Int, val minFreq: Int, val maxFreq: Int, val gov: String)
-    private data class GpuLiveRead(
-        val curFreq: Int,
-        val minFreq: Int,
-        val maxFreq: Int,
-        val gov: String,
-        val adrenoBoost: Int,
-        val minPwrlevel: Int?,
-        val maxPwrlevel: Int?,
-        val defaultPwrlevel: Int?,
-        val throttling: Boolean,
-        val throttlingEpoch: Int,
-    )
-    private data class CpuBoostLiveRead(val inputBoostMs: Int?, val schedBoostEnabled: Boolean, val schedBoostEpoch: Int)
+    // ------------------------------------------------------------------
+    // Periodic refresh
+    // ------------------------------------------------------------------
 
     private fun refreshLiveStateAsync() {
+        if (!liveRefreshRunning) return
         if (clusterHolders.isEmpty() && gpuRoot == null && cpuBoostRoot == null && coreRoot == null) {
-
-            scheduleNextLiveRefresh()
+            scheduleNextLiveRefresh(liveGeneration)
             return
         }
-        Thread({
-            val clusterReads = clusterHolders.map { holder ->
-                holder to ClusterLiveRead(
-                    curFreq = FreqControlUtils.readFreqMHz(holder.paths.curFreq),
-                    minFreq = FreqControlUtils.readFreqKHz(holder.paths.minFreq),
-                    maxFreq = FreqControlUtils.readFreqKHz(holder.paths.maxFreq),
-                    gov = FreqControlUtils.readGovernor(holder.paths.gov),
-                )
-            }
-            val gpuRead = if (gpuRoot != null) {
-                GpuLiveRead(
-                    curFreq = FreqControlUtils.readGpuFreqMHz(),
-                    minFreq = FreqControlUtils.readGpuMinMax(FreqControlUtils.MIN_FREQ_GPU),
-                    maxFreq = FreqControlUtils.readGpuMinMax(FreqControlUtils.MAX_FREQ_GPU),
-                    gov = FreqControlUtils.readGovernor(FreqControlUtils.GOV_GPU),
-                    adrenoBoost = FreqControlUtils.readAdrenoBoost().toIntOrNull()?.coerceIn(0, 3) ?: 0,
-                    minPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.MIN_PWRLEVEL),
-                    maxPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.MAX_PWRLEVEL),
-                    defaultPwrlevel = FreqControlUtils.readIntNode(FreqControlUtils.DEFAULT_PWRLEVEL),
-                    throttlingEpoch = gpuThrottlingController?.currentEpoch() ?: 0,
-                    throttling = FreqControlUtils.readThrottlingEnabled(),
-                )
-            } else null
-            val cpuBoostRead = if (cpuBoostRoot != null) {
-                CpuBoostLiveRead(
-                    inputBoostMs = FreqControlUtils.readIntNode(FreqControlUtils.CPU_INPUT_BOOST_MS),
-                    schedBoostEpoch = cpuBoostSchedController?.currentEpoch() ?: 0,
-                    schedBoostEnabled = FreqControlUtils.readCpuSchedBoostOnInputEnabled(),
-                )
-            } else null
-            val coreRead = if (coreRoot != null && coreViews.isNotEmpty()) {
-                FreqControlUtils.readAllCoresOnline()
-            } else null
-
-            mainHandler.post {
-                clusterReads.forEach { (holder, read) ->
-                    holder.currentFreqView.text = getString(R.string.cluster_current_freq, read.curFreq)
-                    holder.minController?.applyRealValue(read.minFreq)
-                    holder.maxController?.applyRealValue(read.maxFreq)
-                    holder.govController?.applyRealValue(read.gov)
+        val generation = liveGeneration
+        val epochAtStart = uiEpoch.get()
+        val req = buildRequest(includeStatic = false)
+        val coreCount = coreToggleable.size
+        try {
+            io.execute {
+                val state = try {
+                    readState(req, coreCount)
+                } catch (ex: Exception) {
+                    null
                 }
-                gpuRead?.let { g ->
-                    gpuRoot?.findViewById<TextView>(R.id.gpu_current_freq)?.text =
-                        getString(R.string.cluster_current_freq, g.curFreq)
-                    gpuMinController?.applyRealValue(g.minFreq)
-                    gpuMaxController?.applyRealValue(g.maxFreq)
-                    gpuGovController?.applyRealValue(g.gov)
-                    gpuBoostController?.applyRealValue(g.adrenoBoost)
-                    if (g.minPwrlevel != null && g.maxPwrlevel != null && g.defaultPwrlevel != null) {
-                        gpuPwrlevelApplyReal?.invoke(g.minPwrlevel, g.maxPwrlevel, g.defaultPwrlevel)
+                mainHandler.post {
+                    if (generation != liveGeneration) return@post
+                    // Apply only if the user did nothing since this refresh
+                    // began and no write is still pending: otherwise it holds
+                    // the OLD value and would undo the user's choice.
+                    if (state != null && epochAtStart == uiEpoch.get() && writesInFlight == 0) {
+                        applyLiveState(state)
                     }
-                    gpuThrottlingController?.applyRealValue(g.throttling, g.throttlingEpoch)
+                    scheduleNextLiveRefresh(generation)
                 }
-                cpuBoostRead?.let { b ->
-
-                    cpuBoostInputEditRef?.let { edit ->
-                        if (!edit.hasFocus()) edit.setText(b.inputBoostMs?.toString() ?: "")
-                    }
-                    cpuBoostSchedController?.applyRealValue(b.schedBoostEnabled, b.schedBoostEpoch)
-                }
-                coreRead?.let { applyCoreStates(it) }
-
-                scheduleNextLiveRefresh()
             }
-        }).start()
+        } catch (ex: java.util.concurrent.RejectedExecutionException) {
+            // activity is going away
+        }
     }
 
-    private fun scheduleNextLiveRefresh() {
-        if (liveRefreshRunning) mainHandler.postDelayed(liveRefreshRunnable, liveRefreshIntervalMs)
+    private fun applyLiveState(state: StateRead) {
+        state.clusters.forEachIndexed { i, read ->
+            val holder = clusterHolders.getOrNull(i) ?: return@forEachIndexed
+            holder.currentFreqView.text = getString(R.string.cluster_current_freq, read.curMHz)
+            if (read.minKHz > 0) holder.minController?.applyRealValue(read.minKHz)
+            if (read.maxKHz > 0) holder.maxController?.applyRealValue(read.maxKHz)
+            if (read.gov.isNotEmpty()) holder.govController?.applyRealValue(read.gov)
+        }
+        state.gpu?.let { g ->
+            gpuRoot?.findViewById<TextView>(R.id.gpu_current_freq)?.text =
+                getString(R.string.cluster_current_freq, g.curMHz)
+            if (g.minMHz > 0) gpuMinController?.applyRealValue(g.minMHz)
+            if (g.maxMHz > 0) gpuMaxController?.applyRealValue(g.maxMHz)
+            if (g.gov.isNotEmpty()) gpuGovController?.applyRealValue(g.gov)
+            gpuBoostController?.applyRealValue(g.adrenoBoost)
+            if (g.minPwrlevel != null && g.maxPwrlevel != null && g.defaultPwrlevel != null) {
+                gpuPwrlevelApplyReal?.invoke(g.minPwrlevel, g.maxPwrlevel, g.defaultPwrlevel)
+            }
+            gpuThrottlingController?.applyRealValue(g.throttling)
+        }
+        state.cpuBoost?.let { b ->
+            cpuBoostInputEditRef?.let { edit ->
+                if (!edit.hasFocus()) edit.setText(b.inputBoostMs?.toString() ?: "")
+            }
+            cpuBoostSchedController?.applyRealValue(b.schedBoost)
+        }
+        state.coreOnline?.let { if (coreViews.isNotEmpty()) applyCoreStates(it) }
+    }
+
+    private fun scheduleNextLiveRefresh(generation: Int) {
+        if (liveRefreshRunning && generation == liveGeneration) {
+            mainHandler.postDelayed(liveRefreshRunnable, liveRefreshIntervalMs)
+        }
     }
 }

@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">ThermalOverlay</string>
-    <string name="app_subtitle">Performance overlay by @teldommm/</string>
+    <string name="app_subtitle">Performance overlay by @teldommm</string>
     <string name="permission_float">Allow display over other apps to enable the overlay</string>
 
     <string name="start_overlay">Start</string>
@@ -11,7 +11,10 @@
     <string name="status_disabled">Overlay is off</string>
     <string name="status_no_permission">"Display over other apps" permission required</string>
 
-    <string name="root_warning">Root access not detected. The overlay won\'t be able to read CPU/GPU/DDR data — all metrics are read through a root shell.</string>
+    <string name="root_warning">Root access is required — the app cannot run without it. Grant root to ThermalOverlay in your root manager (Magisk / KernelSU / etc.), then tap “Check root again”.</string>
+    <string name="status_no_root">Root access required</string>
+    <string name="check_root_again">Check root again</string>
+    <string name="root_required_toast">Root access is required to run ThermalOverlay</string>
     <string name="root_checking">Checking root access…</string>
 
     <string name="dual_battery_label">Dual battery</string>
@@ -20,6 +23,11 @@
     <string name="notification_channel_name">ThermalOverlay HUD</string>
     <string name="notification_title">Performance overlay is active</string>
     <string name="tile_label">Overlay</string>
+    <string name="overlay_error">Could not show the overlay: %1$s</string>
+
+    <string name="hud_cpu" translatable="false">CPU</string>
+    <string name="hud_gpu" translatable="false">GPU</string>
+    <string name="hud_loading">Loading…</string>
 
     <string name="freq_control_button">Frequency control (Qualcomm)</string>
     <string name="freq_control_title">Frequency control</string>
@@ -56,5 +64,5 @@
     <string name="freq_core_last_toast">Can&#8217;t take the last online core offline</string>
 
     <string name="freq_applied_toast">Applied</string>
-    <string name="freq_write_failed_toast">Failed to apply (node is read-only)</string>
+    <string name="freq_write_failed_toast">Failed to apply (the value was rejected or overridden by the system)</string>
 </resources>

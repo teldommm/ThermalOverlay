@@ -4,7 +4,7 @@
  */
 package com.thermaloverlay.overlay.metrics
 
-import com.thermaloverlay.overlay.shell.KeepShellPublic
+import com.thermaloverlay.overlay.shell.SysReader
 
 object SwapUtils {
     fun getZramFillPercent(): Int {
@@ -13,11 +13,12 @@ object SwapUtils {
         return readFromMeminfo()
     }
 
-    private fun readFromProcSwaps(): Int? {
-        val output = KeepShellPublic.doCmdSync("cat /proc/swaps 2>/dev/null").trim()
-        if (output.isEmpty() || output == "error") return null
+    private fun readFromProcSwaps(): Int? = parseProcSwaps(SysReader.read("/proc/swaps"))
 
-        val lines = output.split("\n").drop(1)
+    internal fun parseProcSwaps(output: String): Int? {
+        if (output.isEmpty()) return null
+
+        val lines = output.trim().split("\n").drop(1)
         var totalSize = 0L
         var totalUsed = 0L
         for (line in lines) {
@@ -34,17 +35,17 @@ object SwapUtils {
     }
 
     private fun readFromZramMmStat(): Int? {
-        val disksize = KeepShellPublic.doCmdSync("cat /sys/block/zram0/disksize 2>/dev/null").trim().toLongOrNull()
+        val disksize = SysReader.read("/sys/block/zram0/disksize").trim().toLongOrNull()
         if (disksize == null || disksize <= 0) return null
 
-        val stat = KeepShellPublic.doCmdSync("cat /sys/block/zram0/mm_stat 2>/dev/null").trim()
+        val stat = SysReader.read("/sys/block/zram0/mm_stat").trim()
         val memUsed = stat.split(Regex("\\s+")).getOrNull(2)?.toLongOrNull() ?: return null
 
         return ((memUsed * 100) / disksize).toInt()
     }
 
     private fun readFromMeminfo(): Int {
-        val meminfo = KeepShellPublic.doCmdSync("cat /proc/meminfo 2>/dev/null")
+        val meminfo = SysReader.read("/proc/meminfo")
         val swapTotal = extractKb(meminfo, "SwapTotal") ?: return 0
         val swapFree = extractKb(meminfo, "SwapFree") ?: 0L
         if (swapTotal <= 0) return 0

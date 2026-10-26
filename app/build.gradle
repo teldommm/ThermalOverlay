@@ -6,6 +6,8 @@ apply plugin: 'org.jetbrains.kotlin.android'
 android {
     namespace "com.thermaloverlay.overlay"
     compileSdk 34
+    // Must match the NDK installed in CI (.github/workflows/build.yml).
+    ndkVersion "27.0.12077973"
 
     defaultConfig {
         applicationId "com.thermaloverlay.overlay"
@@ -20,7 +22,9 @@ android {
             }
         }
         ndk {
-            abiFilters "arm64-v8a"
+            // x86_64 only so the app also runs on (rooted) emulators; real
+            // devices are arm64.
+            abiFilters "arm64-v8a", "x86_64"
         }
     }
 
@@ -42,7 +46,8 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig signingConfigs.release
         }
@@ -56,10 +61,17 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        // android.util.Log etc. are no-ops in plain JVM unit tests.
+        unitTests.returnDefaultValues = true
+    }
 }
 
 dependencies {
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+
+    testImplementation 'junit:junit:4.13.2'
 }

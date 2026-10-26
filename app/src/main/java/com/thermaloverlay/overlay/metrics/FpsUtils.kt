@@ -7,37 +7,47 @@ package com.thermaloverlay.overlay.metrics
 import com.thermaloverlay.overlay.shell.KeepShell
 import com.thermaloverlay.overlay.shell.KeepShellPublic
 import com.thermaloverlay.overlay.shell.RootFile
+import java.util.Locale
 
 class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepShell) {
+    // null = not resolved yet, "" = resolved to "no such node".
+    @Volatile
     private var fpsFilePath: String? = null
     private var subStrCommand = "| awk '{print \$2}'"
     private val gfxInfoFpsUtils = GfxInfoFpsUtils(KeepShellPublic.getInstance("gfxinfo-fps", true))
 
     private val fpsgoStatusPath = "/sys/kernel/fpsgo/fstb/fpsgo_status"
+    private var hasFpsgo: Boolean? = null
 
     private var fpsCommand2 = "service call SurfaceFlinger 1013"
     private var lastTime = -1L
     private var lastFrames = -1
 
+    @Volatile
+    private var probing = false
+
     val currentFps: String?
         get() {
             gfxInfoFpsUtils.getFps()?.let {
-                return String.format("%.1f", it)
+                return fmt(it)
             }
 
-            if (!fpsFilePath.isNullOrEmpty()) {
-                return keepShell.doCmdSync("cat $fpsFilePath $subStrCommand")
-            } else if (fpsFilePath == null) {
+            val path = fpsFilePath
+            if (!path.isNullOrEmpty()) {
+                val v = keepShell.doCmdSync("cat $path $subStrCommand").trim()
+                // "error"/blank must not reach the HUD as a value.
+                return if (v.toFloatOrNull() != null) v else null
+            } else if (path == null) {
                 resolveFpsFilePath()
             }
 
             readFpsgoStatusFps()?.let {
-                return String.format("%.1f", it)
+                return fmt(it)
             }
 
             if (fpsCommand2.isNotEmpty()) {
                 val result = keepShell.doCmdSync(fpsCommand2).trim()
-                if (result != "error" && !result.contains("Parcel")) {
+                if (result != KeepShell.ERROR && !result.contains("Parcel")) {
                     fpsCommand2 = ""
                 } else {
                     try {
@@ -50,7 +60,7 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
                         }
                         lastFrames = frames
                         lastTime = time
-                        return String.format("%.1f", fps)
+                        return fmt(fps)
                     } catch (ex: Exception) {
                         if (!(lastTime > 0 && lastFrames > 0)) {
                             fpsCommand2 = ""
@@ -62,57 +72,52 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
             return null
         }
 
-    val fps: Float
-        get() {
-            val fpsStr = currentFps
-            if (fpsStr != null) {
-                try {
-                    return fpsStr.toFloat()
-                } catch (ex: Exception) {
-                }
-            }
-            return 1f
-        }
+    private fun fmt(v: Float): String = String.format(Locale.US, "%.1f", v)
 
     private fun resolveFpsFilePath() {
-        when {
-            RootFile.fileExists("/sys/class/drm/sde-crtc-0/measured_fps") -> {
-                fpsFilePath = "/sys/class/drm/sde-crtc-0/measured_fps"
-            }
-            RootFile.fileExists("/sys/class/graphics/fb0/measured_fps") -> {
-                fpsFilePath = "/sys/class/graphics/fb0/measured_fps"
-                subStrCommand = ""
-            }
-            else -> {
-                fpsFilePath = ""
-                val probeShell = KeepShell()
-                Thread {
-                    try {
-                        probeShell.doCmdSync("find /sys -name measured_fps 2>/dev/null")
-                            .trim().split("\n").filter { it.contains("crtc") }.minOrNull()?.let {
-                                fpsFilePath = it
-                            }
-                        if (fpsFilePath.isNullOrEmpty()) {
-                            probeShell.doCmdSync("find /sys -name fps 2>/dev/null")
-                                .trim().split("\n").filter { it.contains("crtc") }.minOrNull()?.let {
-                                    fpsFilePath = it
-                                }
-                        }
-                        if (fpsFilePath == null) fpsFilePath = ""
-                        probeShell.tryExit()
-                    } catch (ex: Exception) {
-                        fpsFilePath = ""
-                    }
-                }.start()
-            }
+        val sde = RootFile.fileExistsOrNull("/sys/class/drm/sde-crtc-0/measured_fps") ?: return
+        if (sde) {
+            fpsFilePath = "/sys/class/drm/sde-crtc-0/measured_fps"
+            return
         }
+        val fb0 = RootFile.fileExistsOrNull("/sys/class/graphics/fb0/measured_fps") ?: return
+        if (fb0) {
+            fpsFilePath = "/sys/class/graphics/fb0/measured_fps"
+            subStrCommand = ""
+            return
+        }
+        // Slow whole-/sys search: run it once in the background on its own
+        // shell (with a generous timeout) so it never stalls the HUD.
+        if (probing) return
+        probing = true
+        Thread({
+            val probeShell = KeepShell()
+            try {
+                var found = firstCrtcMatch(probeShell.doCmdSync("find /sys -name measured_fps 2>/dev/null", KeepShell.LONG_TIMEOUT_MS))
+                if (found == null) {
+                    found = firstCrtcMatch(probeShell.doCmdSync("find /sys -name fps 2>/dev/null", KeepShell.LONG_TIMEOUT_MS))
+                }
+                fpsFilePath = found ?: ""
+            } catch (ex: Exception) {
+                fpsFilePath = ""
+            } finally {
+                probeShell.tryExit()
+                probing = false
+            }
+        }, "FpsProbe").start()
+    }
+
+    private fun firstCrtcMatch(output: String): String? {
+        if (output == KeepShell.ERROR) return null
+        return output.trim().split("\n").filter { it.contains("crtc") }.minOrNull()
     }
 
     private fun readFpsgoStatusFps(): Float? {
-        if (!RootFile.fileExists(fpsgoStatusPath)) return null
-        val pkg = getTopPackageName() ?: return null
+        if (hasFpsgo == null) hasFpsgo = RootFile.fileExistsOrNull(fpsgoStatusPath)
+        if (hasFpsgo != true) return null
+        val pkg = ForegroundApp.get(keepShell) ?: return null
         val output = keepShell.doCmdSync("cat $fpsgoStatusPath 2>/dev/null").trim()
-        if (output.isEmpty() || output == "error") return null
+        if (output.isEmpty() || output == KeepShell.ERROR) return null
 
         val rows = output.split("\n")
         var nameIndex = -1
@@ -142,18 +147,5 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
         if (packageName == name || packageName.endsWith(name)) return true
         val tail = packageName.substringAfterLast(".")
         return name.endsWith(tail)
-    }
-
-    private fun getTopPackageName(): String? {
-        val resumed = keepShell.doCmdSync("dumpsys activity activities | grep -m 1 \"mResumedActivity\"").trim()
-        parsePackageFromDump(resumed)?.let { return it }
-        val currentFocus = keepShell.doCmdSync("dumpsys window | grep -m 1 \"mCurrentFocus\"").trim()
-        return parsePackageFromDump(currentFocus)
-    }
-
-    private fun parsePackageFromDump(line: String): String? {
-        if (line.isEmpty() || line == "error") return null
-        val match = Regex("([a-zA-Z0-9._]+)/(?:[a-zA-Z0-9._]+)").find(line) ?: return null
-        return match.groupValues[1]
     }
 }
