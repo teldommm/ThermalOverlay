@@ -590,6 +590,15 @@ class FloatMonitor(private val context: Context) {
         // moment they come back.
         val scan = cpuFrequencyUtils.getClusters()
 
+        // Frequencies are sampled FIRST, before anything that starts a
+        // process. Reading /proc/stat usually goes through `su` + `cat`; a
+        // freshly forked task makes the scheduler ramp its cluster up for a
+        // few milliseconds, so sampling right after it would show the
+        // overlay's own load (e.g. the raised max) instead of the idle state.
+        val clusterFreqs = scan.clusters.map { cpuFrequencyUtils.getClusterFrequencyKHz(it) }
+        val maxFreqKhz = clusterFreqs.maxOrNull() ?: -1L
+        val gpuFreq = GpuUtils.getGpuFreq()
+
         val load = cpuLoadUtils.sample()
         val loads = load?.perCore ?: emptyMap()
         if (load != null) {
@@ -604,10 +613,6 @@ class FloatMonitor(private val context: Context) {
             lastOnlineCores = HashSet(online)
         }
 
-        val clusterFreqs = scan.clusters.map { cpuFrequencyUtils.getClusterFrequencyKHz(it) }
-        val maxFreqKhz = clusterFreqs.maxOrNull() ?: -1L
-
-        val gpuFreq = GpuUtils.getGpuFreq()
         val gpuLoad = GpuUtils.getGpuLoad()
 
         BatteryStatusReader.update(context)
