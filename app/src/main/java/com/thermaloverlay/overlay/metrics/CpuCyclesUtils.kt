@@ -17,6 +17,7 @@ object CpuCyclesUtils {
     // Upper bound for the number of cores the awk script reports.
     private const val MAX_CORES = 16
 
+    @Volatile
     private var streamStarted = false
     private var simpleperfAvailable: Boolean? = null
 
@@ -36,8 +37,13 @@ object CpuCyclesUtils {
     private fun killStreamCmd(): String =
         "pkill -f \"$CYC_SIG\" 2>/dev/null; pkill -f \"simpleperf stat -a -e cpu-cycles\" 2>/dev/null"
 
+    /**
+     * Launches the simpleperf stream if it is not running. It takes several
+     * root-shell round trips, so call it from a background thread that is
+     * allowed to be slow — never from the HUD's metrics tick.
+     */
     @Synchronized
-    private fun ensureStreamStarted() {
+    fun ensureStarted() {
         if (streamStarted) return
         if (hasSimpleperf() != true) return
 
@@ -98,7 +104,7 @@ object CpuCyclesUtils {
      * opens its perf events once at launch, so a re-onlined core never gets a
      * counter again in the running instance — the stream must be relaunched.
      * It is stopped here and lazily restarted by the next
-     * getPerCoreCyclesMhz() call.
+     * ensureStarted() call.
      */
     @Synchronized
     fun restartAfterCoreHotplug() {
@@ -108,8 +114,11 @@ object CpuCyclesUtils {
         streamStarted = false
     }
 
-    fun getPerCoreCyclesMhz(): List<Int>? {
-        ensureStreamStarted()
+    /**
+     * Latest per-core values, or null while the stream is not running or has
+     * not produced its first interval yet. Only reads a file — cheap.
+     */
+    fun readLatest(): List<Int>? {
         if (!streamStarted) return null
 
         val content = SysReader.read(CYC_FILE).trim()

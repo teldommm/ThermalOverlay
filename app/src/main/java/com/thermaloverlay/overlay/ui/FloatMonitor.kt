@@ -54,10 +54,14 @@ import com.thermaloverlay.overlay.shell.KeepShellPublic
 import com.thermaloverlay.overlay.utils.WindowCompatHelper
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.max
 
 class FloatMonitor(private val context: Context) {
     private val cpuLoadUtils = CpuLoadUtils()
@@ -73,8 +77,31 @@ class FloatMonitor(private val context: Context) {
     @Volatile
     private var shown = false
 
+    /** The detailed view was requested: the poller builds the detailed text. */
     @Volatile
     private var showOtherInfo = false
+
+    /** Main thread only: the window is actually laid out in detailed form. */
+    private var detailedShown = false
+
+    // Detailed mode needs a few slow sources (simpleperf start, FPS via
+    // dumpsys). They run on their own thread and the tick only reads their
+    // latest result, so a slow source can't hold up the HUD.
+    private var slowExecutor: ScheduledExecutorService? = null
+    private val slowBusy = AtomicBoolean(false)
+
+    @Volatile
+    private var lastFps: String? = null
+
+    // Rows that appeared once stay (as "--" when the value is briefly
+    // unavailable) so the detailed view never changes height by itself.
+    // Poller thread only.
+    private var rowDdr = false
+    private var rowGmem = false
+    private var rowPwr = false
+    private var rowFps = false
+
+    private var defaultInfoMinWidth = 0
 
     private var executor: ScheduledExecutorService? = null
     private var tickFuture: ScheduledFuture<*>? = null
@@ -156,10 +183,20 @@ class FloatMonitor(private val context: Context) {
         executor = Executors.newSingleThreadScheduledExecutor { r ->
             Thread(r, "HudPoller").apply { isDaemon = true }
         }
+        slowExecutor = Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "HudSlowSources").apply { isDaemon = true }
+        }
         // Kill a simpleperf stream orphaned by a previous process death
         // before this session can start its own.
         executor?.execute { CpuCyclesUtils.cleanupOrphans() }
         restartTicking()
+        // Resolve the one-time probes the detailed view needs (thermal zones,
+        // DDR / GPU memory nodes) shortly after start, while the user is still
+        // looking at the compact view, so the first switch to detailed is quick.
+        try {
+            executor?.schedule(Runnable { prewarmDetails() }, PREWARM_DELAY_MS, TimeUnit.MILLISECONDS)
+        } catch (ignored: Exception) {
+        }
         registerScreenReceiver()
         return true
     }
@@ -172,19 +209,36 @@ class FloatMonitor(private val context: Context) {
         tickFuture?.cancel(false)
         tickFuture = null
 
-        // Last job on the poller thread: stop the root-side stream and give
-        // back the idle root shells, then let the thread end.
+        mainHandler.removeCallbacks(detailedFallback)
+        // Shutdown order matters: the poller finishes its last tick first, and
+        // only then the slow thread (which may be starting simpleperf) stops
+        // the root-side stream and gives the idle root shells back. Doing it
+        // the other way round could leave a stream running behind our back.
+        val slow = slowExecutor
         executor?.let { ex ->
             try {
                 ex.execute {
-                    CpuCyclesUtils.stopStream()
-                    KeepShellPublic.releaseIdleShells()
+                    try {
+                        slow?.execute {
+                            try {
+                                CpuCyclesUtils.stopStream()
+                                KeepShellPublic.releaseIdleShells()
+                            } catch (ignored: Exception) {
+                            }
+                        }
+                    } catch (ignored: RejectedExecutionException) {
+                    }
+                    slow?.shutdown()
                 }
             } catch (ignored: Exception) {
+                slow?.shutdown()
             }
             ex.shutdown()
         }
         executor = null
+        slowExecutor = null
+        showOtherInfo = false
+        detailedShown = false
 
         try {
             rootView?.let { windowManager?.removeViewImmediate(it) }
@@ -230,23 +284,99 @@ class FloatMonitor(private val context: Context) {
         otherInfo = view.findViewById(R.id.fw_other_info)
         chartList = view.findViewById(R.id.fw_chart_list)
         otherInfo?.typeface = Typeface.MONOSPACE
+        defaultInfoMinWidth = otherInfo?.minWidth ?: 0
         return view
     }
 
-    /** Switches between the compact ring view and the detailed text view. */
+    /**
+     * Switches between the compact ring view and the detailed text view.
+     *
+     * Leaving the detailed view is instant. Entering it only requests the
+     * data; the window is re-laid out when the first detailed snapshot is
+     * ready (see [applySnapshot]), so the user sees one change straight to the
+     * finished view instead of an empty "loading" box that then fills in and
+     * resizes. [detailedFallback] covers a very slow first snapshot.
+     */
     private fun toggleMode() {
-        val detailed = !showOtherInfo
-        showOtherInfo = detailed
-        otherInfo?.visibility = if (detailed) View.VISIBLE else View.GONE
-        chartList?.orientation = if (detailed) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-        rootView?.orientation = if (detailed) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        if (!detailed) {
+        if (showOtherInfo) {
+            showOtherInfo = false
+            mainHandler.removeCallbacks(detailedFallback)
+            applyCompactLayout()
+            lastFps = null
             // The simpleperf stream is only needed for the per-core view.
-            executor?.execute { CpuCyclesUtils.stopStream() }
+            slowExecute { CpuCyclesUtils.stopStream() }
+        } else {
+            lastFps = null
+            showOtherInfo = true
+            mainHandler.postDelayed(detailedFallback, DETAILED_READY_TIMEOUT_MS)
         }
-        // Re-arm so the interval matches the new mode.
+        // Re-arm (with no initial delay) so the first snapshot of the new
+        // mode is produced right away and the interval matches the mode.
         restartTicking()
+    }
+
+    private val detailedFallback = Runnable {
+        if (shown && showOtherInfo && !detailedShown) applyDetailedLayout()
+    }
+
+    private fun applyDetailedLayout() {
+        detailedShown = true
+        otherInfo?.visibility = View.VISIBLE
+        chartList?.orientation = LinearLayout.VERTICAL
+        rootView?.orientation = LinearLayout.HORIZONTAL
         clampAfterLayout()
+    }
+
+    private fun applyCompactLayout() {
+        detailedShown = false
+        otherInfo?.let {
+            it.visibility = View.GONE
+            // The detailed view only ever widens while it is shown (so it
+            // can't wobble); start from the default again next time.
+            it.minWidth = defaultInfoMinWidth
+        }
+        chartList?.orientation = LinearLayout.HORIZONTAL
+        rootView?.orientation = LinearLayout.VERTICAL
+        clampAfterLayout()
+    }
+
+    private fun slowExecute(block: () -> Unit) {
+        try {
+            slowExecutor?.execute {
+                try {
+                    block()
+                } catch (ignored: Exception) {
+                }
+            }
+        } catch (ignored: RejectedExecutionException) {
+        }
+    }
+
+    /** Poller thread: hands the slow sources to their own thread, one at a time. */
+    private fun refreshSlowSources() {
+        if (!slowBusy.compareAndSet(false, true)) return
+        try {
+            slowExecutor?.execute {
+                try {
+                    CpuCyclesUtils.ensureStarted()
+                    lastFps = if (showOtherInfo) fpsUtils.currentFps else null
+                } catch (ignored: Exception) {
+                } finally {
+                    slowBusy.set(false)
+                }
+            } ?: slowBusy.set(false)
+        } catch (ex: RejectedExecutionException) {
+            slowBusy.set(false)
+        }
+    }
+
+    /** Poller thread. Result is discarded; it fills the one-time caches. */
+    private fun prewarmDetails() {
+        if (!shown) return
+        cpuLoadUtils.getCpuTemperatureText()
+        cpuFrequencyUtils.getDdrFrequency()
+        GpuUtils.getMemoryUsage()
+        SwapUtils.getZramFillPercent()
     }
 
     private fun stopOverlay() {
@@ -382,7 +512,7 @@ class FloatMonitor(private val context: Context) {
                     Intent.ACTION_SCREEN_OFF -> {
                         tickFuture?.cancel(false)
                         tickFuture = null
-                        executor?.execute { CpuCyclesUtils.stopStream() }
+                        slowExecute { CpuCyclesUtils.stopStream() }
                     }
                     Intent.ACTION_SCREEN_ON -> if (shown) restartTicking()
                 }
@@ -469,7 +599,7 @@ class FloatMonitor(private val context: Context) {
                 // A core was hot-(un)plugged by someone: simpleperf opens its
                 // counters once at launch and would never see a re-onlined
                 // core, so relaunch it (lazily, on the next detailed tick).
-                CpuCyclesUtils.restartAfterCoreHotplug()
+                slowExecute { CpuCyclesUtils.restartAfterCoreHotplug() }
             }
             lastOnlineCores = HashSet(online)
         }
@@ -482,7 +612,12 @@ class FloatMonitor(private val context: Context) {
 
         BatteryStatusReader.update(context)
 
-        val details = if (showOtherInfo) buildDetails(scan, clusterFreqs, loads) else null
+        val details = if (showOtherInfo) {
+            refreshSlowSources()
+            buildDetails(scan, clusterFreqs, loads)
+        } else {
+            null
+        }
 
         val snapshot = Snapshot(
             cpuLoad = Math.ceil(load?.total ?: 0.0).toInt().coerceIn(0, 100),
@@ -496,6 +631,11 @@ class FloatMonitor(private val context: Context) {
         )
         mainHandler.post { applySnapshot(snapshot) }
     }
+
+    // Fixed-width cells: a value changing from "9%" to "100%" or "--" to
+    // "1804M" must not change the width of its column, or the whole HUD
+    // twitches on every update.
+    private fun pct(v: Int): String = "$v%".padStart(4)
 
     private fun buildDetails(
         scan: com.thermaloverlay.overlay.metrics.ClusterScan,
@@ -513,23 +653,27 @@ class FloatMonitor(private val context: Context) {
         val ddrFreq = cpuFrequencyUtils.getDdrFrequency()
 
         val b = SpannableStringBuilder()
-        b.append(whiteBoldSpan("#RAM  $ramPercent%   $swapPercent%"))
+        b.append(whiteBoldSpan("#RAM  ${pct(ramPercent)}  ${pct(swapPercent)}"))
         b.append("\n")
 
-        if (ddrFreq.isNotEmpty()) {
-            b.append(" DDR  $ddrFreq")
+        if (ddrFreq.isNotEmpty()) rowDdr = true
+        if (rowDdr) {
+            b.append(" DDR  " + ddrFreq.ifEmpty { "--" }.padStart(4))
             b.append("\n")
         }
 
-        if (gpuMemoryUsage != null) {
-            b.append(whiteBoldSpan("#GMEM $gpuMemoryUsage"))
+        if (gpuMemoryUsage != null) rowGmem = true
+        if (rowGmem) {
+            b.append(whiteBoldSpan("#GMEM " + (gpuMemoryUsage ?: "--")))
             b.append("\n")
         }
 
-        b.append(whiteBoldSpan("#CPU  " + cpuLoadUtils.getCpuTemperatureText()))
+        b.append(whiteBoldSpan("#CPU  " + cpuLoadUtils.getCpuTemperatureText().padStart(6)))
         b.append("\n")
 
-        val perCoreCycles = CpuCyclesUtils.getPerCoreCyclesMhz()
+        // Only reads the latest value; the stream itself is started by the
+        // slow-sources thread.
+        val perCoreCycles = CpuCyclesUtils.readLatest()
 
         // CPUs that belong to no known policy (a fully offline cluster) get a
         // group of their own, so they are visible even before the kernel
@@ -542,7 +686,11 @@ class FloatMonitor(private val context: Context) {
             if (cluster.isEmpty()) continue
 
             val freqKhz = clusterFreqs.getOrNull(groupIndex) ?: -1L
-            b.append(whiteBoldSpan("#" + cluster.first() + "~" + cluster.last() + "  " + mhzText(freqKhz) + "MHz"))
+            b.append(
+                whiteBoldSpan(
+                    "#" + cluster.first() + "~" + cluster.last() + "  " + mhzText(freqKhz).padStart(4) + "MHz"
+                )
+            )
 
             val lines = StringBuilder()
             for (core in cluster) {
@@ -552,11 +700,11 @@ class FloatMonitor(private val context: Context) {
                 // null means the core is offline (it disappears from
                 // /proc/stat): show "×" in both columns, skip the freq read.
                 if (coreLoad == null) {
-                    lines.append("×".padStart(4)).append("  ").append("×")
+                    lines.append("×".padStart(4)).append("  ").append("×".padStart(5))
                     continue
                 }
 
-                lines.append("${coreLoad.toInt()}%".padStart(4)).append("  ")
+                lines.append(pct(coreLoad.toInt())).append("  ")
 
                 val cyclesMhz = perCoreCycles?.getOrNull(core)
                 val displayMhz = if (cyclesMhz != null && cyclesMhz > 0) {
@@ -565,17 +713,16 @@ class FloatMonitor(private val context: Context) {
                     val khz = cpuFrequencyUtils.getCoreFrequencyKHz(core)
                     if (khz > 0) (khz / 1000).toInt() * coreLoad.toInt() / 100 else null
                 }
-                lines.append(if (displayMhz != null) "${displayMhz}M" else "--")
+                lines.append((if (displayMhz != null) "${displayMhz}M" else "--").padStart(5))
             }
             b.append(lines.toString())
         }
 
-        fpsUtils.currentFps?.let {
-            b.append("\n")
-            b.append(whiteBoldSpan("#FPS  $it"))
-        }
-
+        // Power before FPS: FPS arrives last (it needs two samples), so its
+        // row is the only one that can still appear, and it does so at the
+        // very bottom where it pushes nothing else.
         val currentNow = batteryManager?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+        var powerText: String? = null
         if (currentNow != null) {
             val multiplier = if (OverlayPrefs.isDualBattery(context)) 2 else 1
             val ma = (currentNow / BatteryStatusReader.currentUnitDivisor) * multiplier
@@ -583,11 +730,31 @@ class FloatMonitor(private val context: Context) {
             if (ma > -20000 && ma < 20000 && volts > 0) {
                 val watts = (ma * volts) / 1000.0
                 val pattern = if (abs(watts) >= 100) "%+.1fW" else "%+.2fW"
-                b.append("\n")
-                b.append(whiteBoldSpan("#PWR  " + String.format(Locale.US, pattern, watts)))
+                powerText = String.format(Locale.US, pattern, watts)
             }
         }
+        if (powerText != null) rowPwr = true
+        if (rowPwr) {
+            b.append("\n")
+            b.append(whiteBoldSpan("#PWR  " + (powerText ?: "--").padStart(8)))
+        }
+
+        val fps = lastFps
+        if (fps != null) rowFps = true
+        if (rowFps) {
+            b.append("\n")
+            b.append(whiteBoldSpan("#FPS  " + (fps ?: "--").padStart(5)))
+        }
         return b
+    }
+
+    /** The detailed text only ever gets wider while shown, so it can't wobble. */
+    private fun keepWidthMonotonic(text: CharSequence) {
+        val tv = otherInfo ?: return
+        var widest = 0f
+        for (line in text.toString().split('\n')) widest = max(widest, tv.paint.measureText(line))
+        val needed = ceil(widest).toInt() + tv.paddingLeft + tv.paddingRight
+        if (needed > tv.minWidth) tv.minWidth = needed
     }
 
     private fun applySnapshot(s: Snapshot) {
@@ -608,10 +775,24 @@ class FloatMonitor(private val context: Context) {
         // compact mode while this snapshot was being computed.
         if (showOtherInfo && s.details != null) {
             otherInfo?.text = s.details
+            keepWidthMonotonic(s.details)
+            if (!detailedShown) {
+                // First detailed snapshot: text and layout change in the
+                // same frame, so nothing is ever shown half-filled.
+                mainHandler.removeCallbacks(detailedFallback)
+                applyDetailedLayout()
+            }
         }
     }
 
     private companion object {
         const val POSITION_PREFS = "float_monitor_storage"
+
+        // How long a switch to the detailed view may wait for its first data
+        // before the window changes anyway (very slow device / shell).
+        const val DETAILED_READY_TIMEOUT_MS = 1500L
+
+        // Delay before the one-time detailed-view probes run in the background.
+        const val PREWARM_DELAY_MS = 1500L
     }
 }
