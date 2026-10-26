@@ -643,7 +643,7 @@ class FreqControlActivity : AppCompatActivity() {
             getString(R.string.freq_adreno_boost_high),
         )
         val boostSpinner = root.findViewById<Spinner>(R.id.gpu_spinner_adreno_boost)
-        val boostAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, boostLabels)
+        val boostAdapter = spinnerAdapter(boostLabels)
         boostSpinner.adapter = boostAdapter
         val curBoostIndex = s.adrenoBoost
         boostSpinner.setSelection(curBoostIndex, false)
@@ -767,6 +767,12 @@ class FreqControlActivity : AppCompatActivity() {
         )
     }
 
+    /** Compact adapter shared by every picker (closed row 13sp, open rows 36dp). */
+    private fun spinnerAdapter(items: List<String>): ArrayAdapter<String> =
+        ArrayAdapter(this, R.layout.item_spinner, items.toMutableList()).apply {
+            setDropDownViewResource(R.layout.item_spinner_dropdown)
+        }
+
     // CPU spinner values are in kHz (sysfs native unit, written back exactly);
     // the label truncates to whole MHz for display only (1999600 kHz -> 1999 MHz).
     private fun cpuFreqLabel(khz: Int): String = "${khz / 1000} MHz"
@@ -783,7 +789,7 @@ class FreqControlActivity : AppCompatActivity() {
         onSelected: (Int) -> FreqControlUtils.WriteResult,
     ): SpinnerController<Int>? {
         if (available.isEmpty()) {
-            spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("—"))
+            spinner.adapter = spinnerAdapter(listOf("—"))
             spinner.isEnabled = false
             return null
         }
@@ -793,7 +799,7 @@ class FreqControlActivity : AppCompatActivity() {
             val pos = values.indexOfFirst { it > current }.let { if (it < 0) values.size else it }
             values.add(pos, current)
         }
-        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, values.map(labelOf).toMutableList())
+        val adapter = spinnerAdapter(values.map(labelOf))
         spinner.adapter = adapter
         val initialIndex = values.indexOf(current).let { if (it >= 0) it else 0 }
         spinner.setSelection(initialIndex, false)
@@ -820,13 +826,13 @@ class FreqControlActivity : AppCompatActivity() {
         onSelected: (String) -> FreqControlUtils.WriteResult,
     ): SpinnerController<String>? {
         if (available.isEmpty()) {
-            spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("—"))
+            spinner.adapter = spinnerAdapter(listOf("—"))
             spinner.isEnabled = false
             return null
         }
         val values = available.toMutableList()
         if (current.isNotEmpty() && current !in values) values.add(current)
-        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, values.toMutableList())
+        val adapter = spinnerAdapter(values)
         spinner.adapter = adapter
         val initialIndex = values.indexOf(current).let { if (it >= 0) it else 0 }
         spinner.setSelection(initialIndex, false)

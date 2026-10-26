@@ -12,4 +12,11 @@
     <color name="warning_text">#ffb74d</color>
     <color name="text_primary">#ffffff</color>
     <color name="text_secondary">#99ffffff</color>
+
+    <!-- Dropdown lists (governor / frequency pickers) -->
+    <color name="spinner_bg">#262626</color>
+    <color name="spinner_stroke">#33ffffff</color>
+    <color name="popup_bg">#2b2b2b</color>
+    <color name="accent_soft">#2602d98d</color>
+    <color name="press_soft">#1fffffff</color>
 </resources>

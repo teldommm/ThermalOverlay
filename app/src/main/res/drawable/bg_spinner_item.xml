@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Row of the open list: the chosen value is tinted, a pressed row lightens. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_checked="true">
+        <inset android:insetLeft="4dp" android:insetRight="4dp">
+            <shape android:shape="rectangle">
+                <solid android:color="@color/accent_soft" />
+                <corners android:radius="7dp" />
+            </shape>
+        </inset>
+    </item>
+    <item android:state_pressed="true">
+        <inset android:insetLeft="4dp" android:insetRight="4dp">
+            <shape android:shape="rectangle">
+                <solid android:color="@color/press_soft" />
+                <corners android:radius="7dp" />
+            </shape>
+        </inset>
+    </item>
+    <item android:drawable="@android:color/transparent" />
+</selector>

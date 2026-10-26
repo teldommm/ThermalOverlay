@@ -27,7 +27,6 @@ import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
-import android.view.GestureDetector
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -81,8 +80,12 @@ class FloatMonitor(private val context: Context) {
     @Volatile
     private var showOtherInfo = false
 
-    /** Main thread only: the window is actually laid out in detailed form. */
-    private var detailedShown = false
+    /** Main thread: last detailed text, shown at once when the view is opened again. */
+    private var lastDetails: CharSequence? = null
+
+    /** CPU groups seen by the last tick; lets the placeholder have the final shape. */
+    @Volatile
+    private var layoutHint: List<List<Int>> = emptyList()
 
     // Detailed mode needs a few slow sources (simpleperf start, FPS via
     // dumpsys). They run on their own thread and the tick only reads their
@@ -96,10 +99,15 @@ class FloatMonitor(private val context: Context) {
     // Rows that appeared once stay (as "--" when the value is briefly
     // unavailable) so the detailed view never changes height by itself.
     // Poller thread only.
+    @Volatile
     private var rowDdr = false
+
+    @Volatile
     private var rowGmem = false
+
+    @Volatile
     private var rowPwr = false
-    private var rowFps = false
+
 
     private var defaultInfoMinWidth = 0
 
@@ -209,7 +217,6 @@ class FloatMonitor(private val context: Context) {
         tickFuture?.cancel(false)
         tickFuture = null
 
-        mainHandler.removeCallbacks(detailedFallback)
         // Shutdown order matters: the poller finishes its last tick first, and
         // only then the slow thread (which may be starting simpleperf) stops
         // the root-side stream and gives the idle root shells back. Doing it
@@ -238,7 +245,6 @@ class FloatMonitor(private val context: Context) {
         executor = null
         slowExecutor = null
         showOtherInfo = false
-        detailedShown = false
 
         try {
             rootView?.let { windowManager?.removeViewImmediate(it) }
@@ -289,18 +295,16 @@ class FloatMonitor(private val context: Context) {
     }
 
     /**
-     * Switches between the compact ring view and the detailed text view.
-     *
-     * Leaving the detailed view is instant. Entering it only requests the
-     * data; the window is re-laid out when the first detailed snapshot is
-     * ready (see [applySnapshot]), so the user sees one change straight to the
-     * finished view instead of an empty "loading" box that then fills in and
-     * resizes. [detailedFallback] covers a very slow first snapshot.
+     * Switches between the compact ring view and the detailed text view, at
+     * once, on the tap itself (as the first version did). Opening the detailed
+     * view shows the last known text, or a placeholder with the same shape
+     * (same rows and column widths, "--" instead of numbers), so the window
+     * has its final size immediately and the real numbers just replace the
+     * dashes a moment later.
      */
     private fun toggleMode() {
         if (showOtherInfo) {
             showOtherInfo = false
-            mainHandler.removeCallbacks(detailedFallback)
             applyCompactLayout()
             lastFps = null
             // The simpleperf stream is only needed for the per-core view.
@@ -308,19 +312,40 @@ class FloatMonitor(private val context: Context) {
         } else {
             lastFps = null
             showOtherInfo = true
-            mainHandler.postDelayed(detailedFallback, DETAILED_READY_TIMEOUT_MS)
+            otherInfo?.let { tv ->
+                val text = lastDetails ?: buildPlaceholder()
+                tv.text = text
+                keepWidthMonotonic(text)
+            }
+            applyDetailedLayout()
         }
-        // Re-arm (with no initial delay) so the first snapshot of the new
-        // mode is produced right away and the interval matches the mode.
+        // Re-arm (with no initial delay) so fresh numbers arrive right away
+        // and the interval matches the new mode.
         restartTicking()
     }
 
-    private val detailedFallback = Runnable {
-        if (shown && showOtherInfo && !detailedShown) applyDetailedLayout()
+    /** Same rows and widths as [buildDetails], with "--" for every value. */
+    private fun buildPlaceholder(): CharSequence {
+        val dash = "--"
+        val b = SpannableStringBuilder()
+        b.append(whiteBoldSpan("#RAM  ${dash.padStart(4)}  ${dash.padStart(4)}")).append("\n")
+        if (rowDdr) b.append(" DDR  ${dash.padStart(4)}").append("\n")
+        if (rowGmem) b.append(whiteBoldSpan("#GMEM $dash")).append("\n")
+        b.append(whiteBoldSpan("#CPU  ${dash.padStart(6)}")).append("\n")
+        for ((i, cluster) in layoutHint.withIndex()) {
+            if (cluster.isEmpty()) continue
+            if (i != 0) b.append("\n")
+            b.append(whiteBoldSpan("#${cluster.first()}~${cluster.last()}  ${dash.padStart(4)}MHz"))
+            repeat(cluster.size) {
+                b.append("\n").append(dash.padStart(4)).append("  ").append(dash.padStart(5))
+            }
+        }
+        if (rowPwr) b.append("\n").append(whiteBoldSpan("#PWR  ${dash.padStart(8)}"))
+        b.append("\n").append(whiteBoldSpan("#FPS  ${dash.padStart(5)}"))
+        return b
     }
 
     private fun applyDetailedLayout() {
-        detailedShown = true
         otherInfo?.visibility = View.VISIBLE
         chartList?.orientation = LinearLayout.VERTICAL
         rootView?.orientation = LinearLayout.HORIZONTAL
@@ -328,7 +353,6 @@ class FloatMonitor(private val context: Context) {
     }
 
     private fun applyCompactLayout() {
-        detailedShown = false
         otherInfo?.let {
             it.visibility = View.GONE
             // The detailed view only ever widens while it is shown (so it
@@ -374,8 +398,11 @@ class FloatMonitor(private val context: Context) {
     private fun prewarmDetails() {
         if (!shown) return
         cpuLoadUtils.getCpuTemperatureText()
-        cpuFrequencyUtils.getDdrFrequency()
-        GpuUtils.getMemoryUsage()
+        // Rows that exist on this device are known before the first tap, so
+        // the placeholder already contains them.
+        if (cpuFrequencyUtils.getDdrFrequency().isNotEmpty()) rowDdr = true
+        if (GpuUtils.getMemoryUsage() != null) rowGmem = true
+        if (computePowerText() != null) rowPwr = true
         SwapUtils.getZramFillPercent()
     }
 
@@ -398,25 +425,23 @@ class FloatMonitor(private val context: Context) {
         private var startY = 0
         private var dragging = false
 
-        // Single tap (confirmed, i.e. not the first half of a double tap)
-        // toggles the layout; double tap closes the overlay. Detecting them
-        // together is what stops a double tap from also flipping the layout.
-        private val detector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = true
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                toggleMode()
-                return true
-            }
+        // A tap acts on touch-up, immediately — waiting to find out whether it
+        // is the first half of a double tap (GestureDetector's confirm delay)
+        // added a visible lag. Two taps within DOUBLE_TAP_MS close the overlay.
+        private var lastTapAt = 0L
 
-            override fun onDoubleTap(e: MotionEvent): Boolean {
+        private fun onTap(now: Long) {
+            if (lastTapAt != 0L && now - lastTapAt < DOUBLE_TAP_MS) {
+                lastTapAt = 0L
                 stopOverlay()
-                return true
+            } else {
+                lastTapAt = now
+                toggleMode()
             }
-        })
+        }
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouch(v: View, event: MotionEvent): Boolean {
-            detector.onTouchEvent(event)
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downRawX = event.rawX
@@ -440,7 +465,11 @@ class FloatMonitor(private val context: Context) {
                     }
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (dragging) savePosition(storage)
+                    if (dragging) {
+                        savePosition(storage)
+                    } else if (event.eventTime - event.downTime < TAP_MAX_MS) {
+                        onTap(event.eventTime)
+                    }
                     dragging = false
                 }
                 MotionEvent.ACTION_CANCEL -> dragging = false
@@ -589,6 +618,7 @@ class FloatMonitor(private val context: Context) {
         // drops the cpufreq dir of an offline cluster) so they show up the
         // moment they come back.
         val scan = cpuFrequencyUtils.getClusters()
+        layoutHint = if (scan.missing.isEmpty()) scan.clusters else scan.clusters + listOf(scan.missing)
 
         // Frequencies are sampled FIRST, before anything that starts a
         // process. Reading /proc/stat usually goes through `su` + `cat`; a
@@ -723,34 +753,32 @@ class FloatMonitor(private val context: Context) {
             b.append(lines.toString())
         }
 
-        // Power before FPS: FPS arrives last (it needs two samples), so its
-        // row is the only one that can still appear, and it does so at the
-        // very bottom where it pushes nothing else.
-        val currentNow = batteryManager?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
-        var powerText: String? = null
-        if (currentNow != null) {
-            val multiplier = if (OverlayPrefs.isDualBattery(context)) 2 else 1
-            val ma = (currentNow / BatteryStatusReader.currentUnitDivisor) * multiplier
-            val volts = BatteryStatusReader.batteryVoltage
-            if (ma > -20000 && ma < 20000 && volts > 0) {
-                val watts = (ma * volts) / 1000.0
-                val pattern = if (abs(watts) >= 100) "%+.1fW" else "%+.2fW"
-                powerText = String.format(Locale.US, pattern, watts)
-            }
-        }
+        // Power, then FPS last. The FPS row is always there ("--" until the
+        // first value, which takes a second or so): whether a device has FPS
+        // can't be known before a measurement, and a row that appears only
+        // then makes the whole view jump.
+        val powerText = computePowerText()
         if (powerText != null) rowPwr = true
         if (rowPwr) {
             b.append("\n")
             b.append(whiteBoldSpan("#PWR  " + (powerText ?: "--").padStart(8)))
         }
 
-        val fps = lastFps
-        if (fps != null) rowFps = true
-        if (rowFps) {
-            b.append("\n")
-            b.append(whiteBoldSpan("#FPS  " + (fps ?: "--").padStart(5)))
-        }
+        b.append("\n")
+        b.append(whiteBoldSpan("#FPS  " + (lastFps ?: "--").padStart(5)))
         return b
+    }
+
+    /** Battery power as text ("+3.20W"), or null when current/voltage are unusable. */
+    private fun computePowerText(): String? {
+        val currentNow = batteryManager?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) ?: return null
+        val multiplier = if (OverlayPrefs.isDualBattery(context)) 2 else 1
+        val ma = (currentNow / BatteryStatusReader.currentUnitDivisor) * multiplier
+        val volts = BatteryStatusReader.batteryVoltage
+        if (ma <= -20000 || ma >= 20000 || volts <= 0) return null
+        val watts = (ma * volts) / 1000.0
+        val pattern = if (abs(watts) >= 100) "%+.1fW" else "%+.2fW"
+        return String.format(Locale.US, pattern, watts)
     }
 
     /** The detailed text only ever gets wider while shown, so it can't wobble. */
@@ -779,23 +807,18 @@ class FloatMonitor(private val context: Context) {
         // Compare against the live flag: the user may have switched back to
         // compact mode while this snapshot was being computed.
         if (showOtherInfo && s.details != null) {
+            lastDetails = s.details
             otherInfo?.text = s.details
             keepWidthMonotonic(s.details)
-            if (!detailedShown) {
-                // First detailed snapshot: text and layout change in the
-                // same frame, so nothing is ever shown half-filled.
-                mainHandler.removeCallbacks(detailedFallback)
-                applyDetailedLayout()
-            }
         }
     }
 
     private companion object {
         const val POSITION_PREFS = "float_monitor_storage"
 
-        // How long a switch to the detailed view may wait for its first data
-        // before the window changes anyway (very slow device / shell).
-        const val DETAILED_READY_TIMEOUT_MS = 1500L
+        // A touch shorter than this is a tap; two taps closer than this close the HUD.
+        const val TAP_MAX_MS = 250L
+        const val DOUBLE_TAP_MS = 300L
 
         // Delay before the one-time detailed-view probes run in the background.
         const val PREWARM_DELAY_MS = 1500L

@@ -41,13 +41,13 @@
     <Spinner
         android:id="@+id/spinner_governor"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:background="@drawable/bg_card"
-        android:popupBackground="@drawable/bg_card"
+        android:layout_height="36dp"
+        android:background="@drawable/bg_spinner"
+        android:popupBackground="@drawable/bg_spinner_popup"
         android:layout_marginTop="4dp"
         android:layout_marginBottom="12dp"
         android:paddingStart="12dp"
-        android:paddingEnd="12dp" />
+        android:paddingEnd="32dp" />
 
     <TextView
         android:layout_width="wrap_content"
@@ -59,13 +59,13 @@
     <Spinner
         android:id="@+id/spinner_min_freq"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:background="@drawable/bg_card"
-        android:popupBackground="@drawable/bg_card"
+        android:layout_height="36dp"
+        android:background="@drawable/bg_spinner"
+        android:popupBackground="@drawable/bg_spinner_popup"
         android:layout_marginTop="4dp"
         android:layout_marginBottom="12dp"
         android:paddingStart="12dp"
-        android:paddingEnd="12dp" />
+        android:paddingEnd="32dp" />
 
     <TextView
         android:layout_width="wrap_content"
@@ -77,11 +77,11 @@
     <Spinner
         android:id="@+id/spinner_max_freq"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:background="@drawable/bg_card"
-        android:popupBackground="@drawable/bg_card"
+        android:layout_height="36dp"
+        android:background="@drawable/bg_spinner"
+        android:popupBackground="@drawable/bg_spinner_popup"
         android:layout_marginTop="4dp"
         android:paddingStart="12dp"
-        android:paddingEnd="12dp" />
+        android:paddingEnd="32dp" />
 
 </LinearLayout>
