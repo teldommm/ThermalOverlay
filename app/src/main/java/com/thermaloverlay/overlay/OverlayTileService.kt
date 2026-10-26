@@ -10,7 +10,6 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Build
-import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import kotlinx.coroutines.CoroutineScope
@@ -52,9 +51,10 @@ class OverlayTileService : TileService() {
             return
         }
 
-        // Known-missing root or overlay permission: the main screen explains
-        // it and can re-check. (Unknown root is checked by the service.)
-        if (!hasOverlayPermission() || RootState.granted.value == false) {
+        // Known-missing root: the main screen explains it and can re-check.
+        // (Unknown root is checked by the service, which also grants "display
+        // over other apps" through root when it is missing.)
+        if (RootState.granted.value == false) {
             openMainActivity()
             return
         }
@@ -63,8 +63,6 @@ class OverlayTileService : TileService() {
         // (no root), so the tile follows OverlayState instead.
         startForegroundService(Intent(this, OverlayService::class.java))
     }
-
-    private fun hasOverlayPermission(): Boolean = Settings.canDrawOverlays(this)
 
     // The Intent overload is only reached below API 34 (see the version check);
     // lint can't see through that.

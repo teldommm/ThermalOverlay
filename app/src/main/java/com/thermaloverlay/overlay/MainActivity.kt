@@ -113,7 +113,9 @@ class MainActivity : AppCompatActivity() {
         refreshUi()
 
         Thread {
-            RootState.check(retryNow)
+            // With root the overlay permission is granted silently, so a fresh
+            // install needs no trip to the system settings.
+            if (RootState.check(retryNow)) RootState.ensureOverlayPermission(this)
             mainHandler.post {
                 if (isDestroyed) return@post
                 rootChecking = false
@@ -132,11 +134,25 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (!hasOverlayPermission()) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-            startActivity(intent)
+            // Try the root route first; the system settings screen is only the
+            // fallback for ROMs that refuse it.
+            Thread {
+                val granted = RootState.ensureOverlayPermission(this)
+                mainHandler.post {
+                    if (isDestroyed) return@post
+                    refreshUi()
+                    if (granted) {
+                        onStartClicked()
+                    } else {
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName")
+                            )
+                        )
+                    }
+                }
+            }.start()
             return
         }
 

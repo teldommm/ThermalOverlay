@@ -7,6 +7,8 @@
  */
 package com.thermaloverlay.overlay
 
+import android.content.Context
+import android.provider.Settings
 import com.thermaloverlay.overlay.shell.KeepShellPublic
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,5 +33,27 @@ object RootState {
         }
         _granted.value = ok
         return ok
+    }
+
+    /**
+     * "Display over other apps" is an app-op, and root may set app-ops, so
+     * the user never has to open the system settings: if the permission is
+     * missing it is granted here. Blocking (runs a root command), never call
+     * it on the main thread. Returns whether the permission is held afterwards;
+     * false means it could not be granted (no root, or a ROM that guards the
+     * op itself) and the settings screen is the fallback.
+     */
+    fun ensureOverlayPermission(context: Context): Boolean {
+        if (Settings.canDrawOverlays(context)) return true
+        if (!isGranted) return false
+        val pkg = context.packageName
+        try {
+            KeepShellPublic.doCmdSync(
+                "appops set $pkg SYSTEM_ALERT_WINDOW allow 2>/dev/null || " +
+                    "cmd appops set $pkg SYSTEM_ALERT_WINDOW allow 2>/dev/null"
+            )
+        } catch (ignored: Exception) {
+        }
+        return Settings.canDrawOverlays(context)
     }
 }

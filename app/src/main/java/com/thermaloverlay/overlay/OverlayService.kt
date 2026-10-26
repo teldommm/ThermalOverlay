@@ -14,6 +14,7 @@ import android.content.res.Configuration
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.thermaloverlay.overlay.ui.FloatMonitor
@@ -32,17 +33,23 @@ class OverlayService : Service() {
         // The app is useless without root. Normally the screen/tile already
         // know the answer; after a process restart (START_STICKY) they don't,
         // so ask here, off the main thread (the root prompt can take a while).
-        if (RootState.isGranted) {
+        if (RootState.isGranted && Settings.canDrawOverlays(this)) {
             showOverlay()
         } else {
             Thread({
-                val ok = RootState.check()
+                val ok = RootState.isGranted || RootState.check()
+                // Root can switch "display over other apps" on by itself.
+                val allowed = ok && RootState.ensureOverlayPermission(this)
                 mainHandler.post {
                     if (destroyed) return@post
-                    if (ok) {
+                    if (allowed) {
                         showOverlay()
                     } else {
-                        Toast.makeText(this, R.string.root_required_toast, Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            this,
+                            if (ok) R.string.permission_float else R.string.root_required_toast,
+                            Toast.LENGTH_LONG
+                        ).show()
                         stopSelf()
                     }
                 }
