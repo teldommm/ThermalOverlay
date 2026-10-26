@@ -99,48 +99,77 @@
         android:paddingStart="12dp"
         android:paddingEnd="32dp" />
 
-    <TextView
-        android:layout_width="wrap_content"
+    <!-- Default power level: label, live value on the right, slider and a
+         caption under each end saying which end is faster. Level 0 is the
+         fastest GPU state, the highest number the slowest. -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/freq_pwrlevel_title"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
 
-    <TextView
-        android:id="@+id/gpu_pwrlevel_bounds"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp"
-        android:fontFamily="monospace"
-        android:layout_marginBottom="4dp"
-        tools:text="pwrlevel: min=7 max=0" />
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/freq_pwrlevel_default"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/freq_pwrlevel_default"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
+        <TextView
+            android:id="@+id/gpu_default_pwrlevel_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:minWidth="24dp"
+            android:gravity="end"
+            android:textColor="@color/accent"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            tools:text="3" />
 
-    <TextView
-        android:id="@+id/gpu_default_pwrlevel_value"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textColor="@color/accent"
-        android:textStyle="bold"
-        android:textSize="13sp"
-        android:layout_marginBottom="4dp"
-        tools:text="3" />
+    </LinearLayout>
 
     <SeekBar
         android:id="@+id/gpu_seekbar_default_pwrlevel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
         android:progressTint="@color/accent"
         android:progressBackgroundTint="@color/spinner_stroke"
-        android:thumbTint="@color/accent"
-        android:layout_marginBottom="14dp" />
+        android:thumbTint="@color/accent" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
+
+        <TextView
+            android:id="@+id/gpu_pwrlevel_fast"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="start"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp"
+            tools:text="0 · fastest" />
+
+        <TextView
+            android:id="@+id/gpu_pwrlevel_slow"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp"
+            tools:text="7 · slowest" />
+
+    </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"

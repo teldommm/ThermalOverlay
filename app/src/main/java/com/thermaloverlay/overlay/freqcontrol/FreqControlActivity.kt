@@ -672,7 +672,8 @@ class FreqControlActivity : AppCompatActivity() {
         val maxPl = s.maxPwrlevel
         val defPl = s.defaultPwrlevel
         val seekBar = root.findViewById<SeekBar>(R.id.gpu_seekbar_default_pwrlevel)
-        val boundsView = root.findViewById<TextView>(R.id.gpu_pwrlevel_bounds)
+        val fastView = root.findViewById<TextView>(R.id.gpu_pwrlevel_fast)
+        val slowView = root.findViewById<TextView>(R.id.gpu_pwrlevel_slow)
         val defaultValueView = root.findViewById<TextView>(R.id.gpu_default_pwrlevel_value)
 
         if (minPl != null && maxPl != null && defPl != null && maxPl <= minPl) {
@@ -682,8 +683,11 @@ class FreqControlActivity : AppCompatActivity() {
             gpuPwrlevelApplyReal = { min, max, def ->
                 if (max <= min && !seekBar.isPressed) {
                     currentMaxPl = max
-                    boundsView.text = getString(R.string.freq_pwrlevel_bounds, min, max)
+                    fastView.text = getString(R.string.freq_pwrlevel_fast, max)
+                    slowView.text = getString(R.string.freq_pwrlevel_slow, min)
                     seekBar.max = min - max
+                    // A single level has nothing to choose from.
+                    seekBar.isEnabled = min > max
                     seekBar.progress = (def - max).coerceIn(0, min - max)
                     defaultValueView.text = def.toString()
                 }
@@ -717,7 +721,8 @@ class FreqControlActivity : AppCompatActivity() {
                 }
             })
         } else {
-            boundsView.text = ""
+            fastView.text = ""
+            slowView.text = ""
             defaultValueView.text = "—"
             seekBar.isEnabled = false
             gpuPwrlevelApplyReal = null

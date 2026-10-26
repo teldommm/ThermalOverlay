@@ -47,9 +47,9 @@
     <string name="freq_adreno_boost_medium">Средний</string>
     <string name="freq_adreno_boost_high">Высокий</string>
 
-    <string name="freq_pwrlevel_title">Pwrlevel</string>
-    <string name="freq_pwrlevel_default">default_pwrlevel</string>
-    <string name="freq_pwrlevel_bounds">pwrlevel: min=%1$d max=%2$d</string>
+    <string name="freq_pwrlevel_default">Уровень мощности по умолчанию</string>
+    <string name="freq_pwrlevel_fast">%1$d · самый быстрый</string>
+    <string name="freq_pwrlevel_slow">%1$d · самый медленный</string>
     <string name="freq_apply">Применить</string>
     <string name="freq_gpu_throttling_label">GPU Throttling (снижает нагрев)</string>
 
