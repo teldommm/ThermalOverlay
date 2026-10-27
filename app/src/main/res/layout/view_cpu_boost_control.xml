@@ -55,7 +55,7 @@
                 android:layout_height="40dp"
                 android:background="@drawable/bg_button_start"
                 android:stateListAnimator="@null"
-                android:textColor="#0a1f18"
+                android:textColor="@color/on_accent"
                 android:textStyle="bold"
                 android:textAllCaps="false"
                 android:elevation="0dp"

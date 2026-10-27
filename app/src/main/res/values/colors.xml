@@ -25,20 +25,26 @@
     <color name="hud_text_secondary">#B9BEC5</color>
     <color name="hud_text_muted">#9096A0</color>
 
-    <color name="bg_dark">#121212</color>
-    <color name="surface_dark">#1e1e1e</color>
-    <color name="accent">#02d98d</color>
-    <color name="danger">#f9592f</color>
-    <color name="warning_bg_solid">#3d2e14</color>
-    <color name="warning_text">#ffb74d</color>
+    <!-- App screens: the same slate-and-blue palette as the HUD. Cards use the
+         HUD's own slate with its dark outline; inputs sit recessed inside
+         them; the accent is the HUD's blue. -->
+    <color name="bg_dark">#262A30</color>
+    <color name="surface_dark">#393E46</color>
+    <color name="accent">#3B8CF5</color>
+    <color name="on_accent">#FFFFFF</color>
+    <color name="danger">#FF5D52</color>
+    <color name="warning_bg_solid">#463A28</color>
+    <color name="warning_stroke">#6B5433</color>
+    <color name="warning_text">#FF9F3D</color>
+    <color name="button_disabled">#664A515B</color>
     <color name="text_primary">#ffffff</color>
-    <color name="text_secondary">#99ffffff</color>
+    <color name="text_secondary">#B9BEC5</color>
 
     <!-- Dropdown lists (governor / frequency pickers) -->
-    <color name="spinner_bg">#262626</color>
-    <color name="spinner_stroke">#33ffffff</color>
-    <color name="popup_bg">#2b2b2b</color>
-    <color name="accent_soft">#2602d98d</color>
+    <color name="spinner_bg">#2F343B</color>
+    <color name="spinner_stroke">#525963</color>
+    <color name="popup_bg">#444A53</color>
+    <color name="accent_soft">#333B8CF5</color>
     <color name="press_soft">#1fffffff</color>
-    <color name="card_stroke">#14ffffff</color>
+    <color name="card_stroke">#2F343B</color>
 </resources>
