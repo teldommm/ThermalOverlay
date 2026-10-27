@@ -8,18 +8,18 @@
     <color name="color_load_veryhight">#FF5D52</color>
     <color name="color_load_critical">#FF3B30</color>
 
-    <!-- CPU / GPU load rings: one cool-to-hot ramp. Idle is a light sky blue,
-         the same hue family as normal use (blue), so the two read as one
-         palette; high load turns orange, saturation red. The battery ring
-         keeps the color_load_* set above. -->
-    <color name="ring_load_low">#62BAF7</color>
+    <!-- CPU / GPU load rings: blue only. Load grows from a light sky blue
+         through the normal blue to deeper royal blue and indigo. Every stop
+         stays bright enough to read against the gray ring track. The battery
+         ring keeps the color_load_* set above. -->
+    <color name="ring_load_low">#7CC4FA</color>
     <color name="ring_load_mid">#3B8CF5</color>
-    <color name="ring_load_hight">#FF9F3D</color>
-    <color name="ring_load_veryhight">#FF5D52</color>
+    <color name="ring_load_hight">#3F74F7</color>
+    <color name="ring_load_veryhight">#4F63F5</color>
 
     <!-- HUD surface and text -->
     <color name="hud_bg">#CC393E46</color>
-    <color name="hud_stroke">#B3262A31</color>
+    <color name="hud_stroke">#CC2F343B</color>
     <color name="hud_ring_track">#6B7078</color>
     <color name="hud_text_primary">#FFFFFF</color>
     <color name="hud_text_secondary">#B9BEC5</color>

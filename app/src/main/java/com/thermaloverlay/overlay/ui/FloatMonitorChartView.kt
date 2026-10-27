@@ -1,5 +1,5 @@
 /**
- * Ring indicator for CPU/GPU load: light blue when idle, blue in normal use, orange when busy, red when saturated.
+ * Ring indicator for CPU/GPU load: blue only, from light sky blue when idle to deep indigo-blue when saturated.
  */
 package com.thermaloverlay.overlay.ui
 
