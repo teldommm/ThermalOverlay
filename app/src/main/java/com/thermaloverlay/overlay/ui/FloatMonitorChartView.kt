@@ -1,5 +1,5 @@
 /**
- * Ring indicator for CPU/GPU load: green when idle, red when saturated.
+ * Ring indicator for CPU/GPU load: light blue when idle, blue in normal use, orange when busy, red when saturated.
  */
 package com.thermaloverlay.overlay.ui
 
@@ -17,10 +17,10 @@ class FloatMonitorChartView @JvmOverloads constructor(
     override fun colorFor(percent: Int): Int = ContextCompat.getColor(
         context,
         when {
-            percent > 90 -> R.color.color_load_veryhight
-            percent > 75 -> R.color.color_load_hight
-            percent > 20 -> R.color.color_load_mid
-            else -> R.color.color_load_low
+            percent > 90 -> R.color.ring_load_veryhight
+            percent > 75 -> R.color.ring_load_hight
+            percent > 20 -> R.color.ring_load_mid
+            else -> R.color.ring_load_low
         }
     )
 }
