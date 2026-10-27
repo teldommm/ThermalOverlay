@@ -112,6 +112,60 @@ object GpuUtils {
         return afterParen.trim().substringBefore(' ')
     }
 
+    // --- temperature ---
+
+    // Thermal zones / nodes that report the GPU temperature. A positive probe
+    // is cached; an empty one is retried a few times (root may not be granted
+    // on the very first tick) and then given up on.
+    private var gpuTempPaths: List<String>? = null
+    private var gpuTempProbeMisses = 0
+
+    /**
+     * Hottest GPU sensor as "41.0°C", or null if this device exposes none (or
+     * the value is unreadable this tick). Looks at thermal zones whose type
+     * mentions gpu/mali (gpuss-N, gpu-thermal, mtk gpu, ...) and the Adreno
+     * kgsl temp node.
+     */
+    fun getGpuTemperatureText(): String? {
+        var paths = gpuTempPaths
+        if (paths == null) {
+            if (gpuTempProbeMisses >= GPU_TEMP_MAX_MISSES) return null
+            val out = com.thermaloverlay.overlay.shell.KeepShellPublic.doCmdSync(
+                "grep -l -i -E 'gpu|mali' /sys/class/thermal/thermal_zone*/type 2>/dev/null; " +
+                    "ls $gpuParamsDirAdreno/temp 2>/dev/null"
+            ).trim()
+            if (out == com.thermaloverlay.overlay.shell.KeepShell.ERROR) return null
+            val found = out.lineSequence().map { it.trim() }.mapNotNull {
+                when {
+                    it.endsWith("/type") -> it.removeSuffix("/type") + "/temp"
+                    it.endsWith("/temp") -> it
+                    else -> null
+                }
+            }.distinct().toList()
+            if (found.isEmpty()) {
+                gpuTempProbeMisses++
+                return null
+            }
+            gpuTempPaths = found
+            paths = found
+        }
+
+        val maxC = SysReader.readMany(paths)
+            .mapNotNull { normalizeTempC(it?.trim()?.toDoubleOrNull()) }
+            .maxOrNull() ?: return null
+        return String.format(java.util.Locale.US, "%.1f°C", maxC)
+    }
+
+    /** Millidegrees -> °C; plain degrees pass through; anything implausible is dropped. */
+    internal fun normalizeTempC(v: Double?): Double? = when {
+        v == null -> null
+        v > 1000 -> v / 1000
+        v in 1.0..150.0 -> v
+        else -> null
+    }
+
+    private const val GPU_TEMP_MAX_MISSES = 5
+
     // --- frequency ---
 
     /** Current GPU frequency in MHz as a number string, "" if unavailable. */

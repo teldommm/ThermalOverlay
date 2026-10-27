@@ -95,17 +95,23 @@ class FloatMonitor(private val context: Context) {
     @Volatile
     private var lastFps: String? = null
 
-    // Rows that appeared once stay (as "--" when the value is briefly
+    // Optional rows all follow one rule: a row is shown once its source has
+    // delivered a value, and a row that never found a source is not drawn at
+    // all. Once found a row stays (as "--" when the value is briefly
     // unavailable) so the detailed view never changes height by itself.
-    // Poller thread only.
-    @Volatile
-    private var rowDdr = false
+    // The order of the constants is the order of the flags in the saved
+    // shape, so append new rows at the end. (#RAM always exists, so it is
+    // not optional.) Poller thread only.
+    private enum class Row { DDR, GMEM, PWR, GPU_TEMP, CPU_TEMP, FPS }
 
     @Volatile
-    private var rowGmem = false
+    private var rowsFound: Set<Row> = emptySet()
 
-    @Volatile
-    private var rowPwr = false
+    private fun has(row: Row): Boolean = row in rowsFound
+
+    private fun found(row: Row, available: Boolean) {
+        if (available && row !in rowsFound) rowsFound = rowsFound + row
+    }
 
 
     private var defaultInfoMinWidth = 0
@@ -127,6 +133,7 @@ class FloatMonitor(private val context: Context) {
     private var cachedDdr: String = ""
     private var cachedSwap = 0
     private var cachedTemp = "--"
+    private var cachedGtemp: String? = null
     private var cacheAt = 0L
 
     // Last shape written to the preferences (poller thread only).
@@ -415,7 +422,7 @@ class FloatMonitor(private val context: Context) {
     /** Remembers the CPU grouping and optional rows, so the next start has the final shape at once. */
     private fun persistShape() {
         val sig = layoutHint.joinToString(";") { it.joinToString(",") } +
-            "|" + (if (rowDdr) 1 else 0) + (if (rowGmem) 1 else 0) + (if (rowPwr) 1 else 0)
+            "|" + Row.values().joinToString("") { if (has(it)) "1" else "0" }
         if (sig == savedShape) return
         savedShape = sig
         context.getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
@@ -431,41 +438,44 @@ class FloatMonitor(private val context: Context) {
             layoutHint = parts[0].split(';').filter { it.isNotEmpty() }
                 .map { g -> g.split(',').map { it.toInt() } }
             val rows = parts.getOrNull(1) ?: ""
-            rowDdr = rows.getOrNull(0) == '1'
-            rowGmem = rows.getOrNull(1) == '1'
-            rowPwr = rows.getOrNull(2) == '1'
+            rowsFound = Row.values().filter { rows.getOrNull(it.ordinal) == '1' }.toSet()
         } catch (ignored: Exception) {
             layoutHint = emptyList()
         }
     }
 
-    private fun newGrid(groups: List<List<Int>>, withGmem: Boolean, withPwr: Boolean): HudTextGrid {
+    private fun newGrid(
+        groups: List<List<Int>>,
+        rows: Set<Row>,
+    ): HudTextGrid {
         val m = hudMetrics ?: HudMetrics(TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply { textSize = 20f })
         val labels = groups.filter { it.isNotEmpty() }.map { "#${it.first()}~${it.last()}" }
         val rowLabels = ArrayList<String>()
         rowLabels.add("#RAM")
-        rowLabels.add(LABEL_CPU)
-        rowLabels.add(LABEL_FPS)
-        if (withGmem) rowLabels.add(LABEL_GMEM)
-        if (withPwr) rowLabels.add(LABEL_PWR)
+        if (Row.CPU_TEMP in rows) rowLabels.add(LABEL_CPU)
+        if (Row.GPU_TEMP in rows) rowLabels.add(LABEL_GPU)
+        if (Row.FPS in rows) rowLabels.add(LABEL_FPS)
+        if (Row.GMEM in rows) rowLabels.add(LABEL_GMEM)
+        if (Row.PWR in rows) rowLabels.add(LABEL_PWR)
         return HudTextGrid(m, labels, rowLabels)
     }
 
     /** Same rows and columns as [buildDetails], with "--" for every value. */
     private fun buildPlaceholder(): HudDetails {
         val dash = "--"
-        val g = newGrid(layoutHint, rowGmem, rowPwr)
+        val g = newGrid(layoutHint, rowsFound)
         g.ramRow(dash, dash)
-        if (rowDdr) g.mutedRow(LABEL_DDR, dash)
-        if (rowGmem) g.boldRow(LABEL_GMEM, dash)
-        g.boldRow(LABEL_CPU, dash)
+        if (has(Row.DDR)) g.mutedRow(LABEL_DDR, dash)
+        if (has(Row.GMEM)) g.boldRow(LABEL_GMEM, dash)
+        if (has(Row.CPU_TEMP)) g.boldRow(LABEL_CPU, dash)
+        if (has(Row.GPU_TEMP)) g.boldRow(LABEL_GPU, dash)
         for (cluster in layoutHint) {
             if (cluster.isEmpty()) continue
             g.clusterHeader("#${cluster.first()}~${cluster.last()}", dash)
             repeat(cluster.size) { g.coreRow(dash, dash) }
         }
-        if (rowPwr) g.boldRow(LABEL_PWR, dash)
-        g.boldRow(LABEL_FPS, dash)
+        if (has(Row.PWR)) g.boldRow(LABEL_PWR, dash)
+        if (has(Row.FPS)) g.boldRow(LABEL_FPS, dash)
         return g.build()
     }
 
@@ -523,6 +533,7 @@ class FloatMonitor(private val context: Context) {
         cachedSwap = SwapUtils.getZramFillPercent()
         cachedDdr = cpuFrequencyUtils.getDdrFrequency()
         cachedTemp = cpuLoadUtils.getCpuTemperatureText()
+        cachedGtemp = GpuUtils.getGpuTemperatureText()
         cacheAt = SystemClock.elapsedRealtime()
     }
 
@@ -532,9 +543,11 @@ class FloatMonitor(private val context: Context) {
         refreshDetailCache()
         // Rows that exist on this device are known before the first tap, so
         // the placeholder already contains them.
-        if (cachedDdr.isNotEmpty()) rowDdr = true
-        if (cachedGmem != null) rowGmem = true
-        if (computePowerText() != null) rowPwr = true
+        found(Row.DDR, cachedDdr.isNotEmpty())
+        found(Row.GMEM, cachedGmem != null)
+        found(Row.CPU_TEMP, cachedTemp != "--")
+        found(Row.GPU_TEMP, cachedGtemp != null)
+        found(Row.PWR, computePowerText() != null)
         persistShape()
     }
 
@@ -822,8 +835,10 @@ class FloatMonitor(private val context: Context) {
         val ddrFreq = cachedDdr
 
         // Rows that appeared once stay (as "--"), so the view never changes height by itself.
-        if (ddrFreq.isNotEmpty()) rowDdr = true
-        if (gpuMemoryUsage != null) rowGmem = true
+        found(Row.DDR, ddrFreq.isNotEmpty())
+        found(Row.GMEM, gpuMemoryUsage != null)
+        found(Row.CPU_TEMP, cachedTemp != "--")
+        found(Row.GPU_TEMP, cachedGtemp != null)
 
         // CPUs that belong to no known policy (a fully offline cluster) get a
         // group of their own, so they are visible even before the kernel
@@ -832,13 +847,15 @@ class FloatMonitor(private val context: Context) {
         if (scan.missing.isNotEmpty()) groups.add(scan.missing)
 
         val powerText = computePowerText()
-        if (powerText != null) rowPwr = true
+        found(Row.PWR, powerText != null)
+        found(Row.FPS, lastFps != null)
 
-        val g = newGrid(groups, rowGmem, rowPwr)
+        val g = newGrid(groups, rowsFound)
         g.ramRow("$ramPercent%", "$swapPercent%")
-        if (rowDdr) g.mutedRow(LABEL_DDR, ddrFreq.ifEmpty { "--" })
-        if (rowGmem) g.boldRow(LABEL_GMEM, gpuMemoryUsage ?: "--")
-        g.boldRow(LABEL_CPU, cachedTemp)
+        if (has(Row.DDR)) g.mutedRow(LABEL_DDR, ddrFreq.ifEmpty { "--" })
+        if (has(Row.GMEM)) g.boldRow(LABEL_GMEM, gpuMemoryUsage ?: "--")
+        if (has(Row.CPU_TEMP)) g.boldRow(LABEL_CPU, cachedTemp)
+        if (has(Row.GPU_TEMP)) g.boldRow(LABEL_GPU, cachedGtemp ?: "--")
 
         // Only reads the latest value; the stream itself is started by the
         // slow-sources thread.
@@ -874,12 +891,13 @@ class FloatMonitor(private val context: Context) {
             }
         }
 
-        // Power, then FPS last. The FPS row is always there ("--" until the
-        // first value, which takes a second or so): whether a device has FPS
-        // can't be known before a measurement, and a row that appears only
-        // then makes the whole view jump.
-        if (rowPwr) g.boldRow(LABEL_PWR, powerText ?: "--")
-        g.boldRow(LABEL_FPS, lastFps ?: "--")
+        // Power, then FPS last. Both follow the same rule as every other
+        // optional row. FPS can only be known after a measurement (about a
+        // second), so on the very first run its row appears once; after that
+        // it is remembered with the rest of the shape and is there from the
+        // first frame.
+        if (has(Row.PWR)) g.boldRow(LABEL_PWR, powerText ?: "--")
+        if (has(Row.FPS)) g.boldRow(LABEL_FPS, lastFps ?: "--")
         return g.build()
     }
 
@@ -934,6 +952,7 @@ class FloatMonitor(private val context: Context) {
         const val LABEL_DDR = " DDR"
         const val LABEL_GMEM = "#GMEM"
         const val LABEL_CPU = "#CPU"
+        const val LABEL_GPU = "#GPU"
         const val LABEL_PWR = "#PWR"
         const val LABEL_FPS = "#FPS"
 
