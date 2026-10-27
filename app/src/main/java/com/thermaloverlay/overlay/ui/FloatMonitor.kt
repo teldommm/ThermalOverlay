@@ -116,11 +116,6 @@ class FloatMonitor(private val context: Context) {
 
     private var defaultInfoMinWidth = 0
 
-    // Width of the compact ring row, measured once right after inflating
-    // (the layout file is in its compact state). Used as the window's
-    // minimum width in the detailed view.
-    private var compactWidthPx = 0
-
     // Paints of the detailed text view (set before the poller starts).
     @Volatile
     private var hudMetrics: HudMetrics? = null
@@ -357,11 +352,6 @@ class FloatMonitor(private val context: Context) {
             hudMetrics = HudMetrics(it.paint)
         }
         defaultInfoMinWidth = otherInfo?.minWidth ?: 0
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        compactWidthPx = view.measuredWidth
         return view
     }
 
@@ -489,17 +479,10 @@ class FloatMonitor(private val context: Context) {
         return g.build()
     }
 
-    // Compact: the rings in a row. Detailed: the rings in a column with the
-    // text next to them. The window keeps the width the compact row has, so
-    // switching modes only rearranges what is inside; it never resizes
-    // sideways (the text fits in what the ring column leaves free).
     private fun applyDetailedLayout() {
         otherInfo?.visibility = View.VISIBLE
         chartList?.orientation = LinearLayout.VERTICAL
-        rootView?.let {
-            it.orientation = LinearLayout.HORIZONTAL
-            it.minimumWidth = compactWidthPx
-        }
+        rootView?.orientation = LinearLayout.HORIZONTAL
         clampAfterLayout()
     }
 
@@ -511,10 +494,7 @@ class FloatMonitor(private val context: Context) {
             it.minWidth = defaultInfoMinWidth
         }
         chartList?.orientation = LinearLayout.HORIZONTAL
-        rootView?.let {
-            it.orientation = LinearLayout.VERTICAL
-            it.minimumWidth = 0
-        }
+        rootView?.orientation = LinearLayout.VERTICAL
         clampAfterLayout()
     }
 
