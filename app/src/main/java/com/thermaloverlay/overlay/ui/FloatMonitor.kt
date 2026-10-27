@@ -14,8 +14,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Point
+import android.graphics.Typeface
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
@@ -47,6 +49,7 @@ import com.thermaloverlay.overlay.metrics.GpuUtils
 import com.thermaloverlay.overlay.metrics.SwapUtils
 import com.thermaloverlay.overlay.shell.KeepShellPublic
 import com.thermaloverlay.overlay.utils.WindowCompatHelper
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -332,12 +335,38 @@ class FloatMonitor(private val context: Context) {
         chargerView = view.findViewById(R.id.fw_charger)
         otherInfo = view.findViewById(R.id.fw_other_info)
         chartList = view.findViewById(R.id.fw_chart_list)
-        // No monospace font: many ROMs map "monospace" to their proportional
-        // system font. The columns are pixel-measured (HudTextGrid), so
-        // whatever font the TextView really draws with is the one measured.
-        otherInfo?.let { hudMetrics = HudMetrics(it.paint) }
+        // A real monospace font, loaded from its file as the first version did:
+        // many ROMs map Typeface.MONOSPACE to their proportional system font,
+        // where "W" is wider than "F" and #PWR comes out wider than #FPS. The
+        // columns are pixel-measured (HudTextGrid), so they stay aligned even
+        // if no monospace font file is found.
+        otherInfo?.let {
+            it.typeface = loadMonospaceTypeface()
+            hudMetrics = HudMetrics(it.paint)
+        }
         defaultInfoMinWidth = otherInfo?.minWidth ?: 0
         return view
+    }
+
+    private fun loadMonospaceTypeface(): Typeface {
+        val candidates = listOf(
+            "/system/fonts/DroidSansMono.ttf",
+            "/system/fonts/RobotoMono-Regular.ttf",
+            "/system/fonts/NotoSansMono-Regular.ttf",
+            "/system/fonts/CutiveMono.ttf",
+        )
+        val probe = Paint()
+        for (path in candidates) {
+            try {
+                if (!File(path).exists()) continue
+                val tf = Typeface.createFromFile(path)
+                probe.typeface = tf
+                // Accept only a font whose letters really have equal widths.
+                if (probe.measureText("W") == probe.measureText("i")) return tf
+            } catch (ignored: Exception) {
+            }
+        }
+        return Typeface.MONOSPACE
     }
 
     /**
@@ -410,16 +439,22 @@ class FloatMonitor(private val context: Context) {
         }
     }
 
-    private fun newGrid(groups: List<List<Int>>): HudTextGrid {
+    private fun newGrid(groups: List<List<Int>>, withGmem: Boolean, withPwr: Boolean): HudTextGrid {
         val m = hudMetrics ?: HudMetrics(TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply { textSize = 20f })
         val labels = groups.filter { it.isNotEmpty() }.map { "#${it.first()}~${it.last()}" }
-        return HudTextGrid(m, labels)
+        val rowLabels = ArrayList<String>()
+        rowLabels.add("#RAM")
+        rowLabels.add(LABEL_CPU)
+        rowLabels.add(LABEL_FPS)
+        if (withGmem) rowLabels.add(LABEL_GMEM)
+        if (withPwr) rowLabels.add(LABEL_PWR)
+        return HudTextGrid(m, labels, rowLabels)
     }
 
     /** Same rows and columns as [buildDetails], with "--" for every value. */
     private fun buildPlaceholder(): HudDetails {
         val dash = "--"
-        val g = newGrid(layoutHint)
+        val g = newGrid(layoutHint, rowGmem, rowPwr)
         g.ramRow(dash, dash)
         if (rowDdr) g.mutedRow(LABEL_DDR, dash)
         if (rowGmem) g.boldRow(LABEL_GMEM, dash)
@@ -796,7 +831,10 @@ class FloatMonitor(private val context: Context) {
         val groups = ArrayList<List<Int>>(scan.clusters)
         if (scan.missing.isNotEmpty()) groups.add(scan.missing)
 
-        val g = newGrid(groups)
+        val powerText = computePowerText()
+        if (powerText != null) rowPwr = true
+
+        val g = newGrid(groups, rowGmem, rowPwr)
         g.ramRow("$ramPercent%", "$swapPercent%")
         if (rowDdr) g.mutedRow(LABEL_DDR, ddrFreq.ifEmpty { "--" })
         if (rowGmem) g.boldRow(LABEL_GMEM, gpuMemoryUsage ?: "--")
@@ -840,8 +878,6 @@ class FloatMonitor(private val context: Context) {
         // first value, which takes a second or so): whether a device has FPS
         // can't be known before a measurement, and a row that appears only
         // then makes the whole view jump.
-        val powerText = computePowerText()
-        if (powerText != null) rowPwr = true
         if (rowPwr) g.boldRow(LABEL_PWR, powerText ?: "--")
         g.boldRow(LABEL_FPS, lastFps ?: "--")
         return g.build()

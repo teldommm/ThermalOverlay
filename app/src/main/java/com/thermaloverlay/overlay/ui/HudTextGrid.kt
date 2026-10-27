@@ -36,7 +36,13 @@ class HudMetrics(base: TextPaint) {
     val bold = TextPaint(base).apply { typeface = Typeface.create(base.typeface, Typeface.BOLD) }
 }
 
-class HudTextGrid(private val m: HudMetrics, clusterLabels: List<String>) {
+/**
+ * @param clusterLabels the "#0~5" style labels of the cluster headers.
+ * @param rowLabels     the single-value labels that are really shown ("#RAM",
+ *                      "#GMEM", ...): only they decide how wide the label
+ *                      column is, so a row that isn't there can't widen it.
+ */
+class HudTextGrid(private val m: HudMetrics, clusterLabels: List<String>, rowLabels: List<String>) {
     private val sb = SpannableStringBuilder()
     private var rows = 0
 
@@ -57,7 +63,7 @@ class HudTextGrid(private val m: HudMetrics, clusterLabels: List<String>) {
         pctRight = ceil(max(clusterW, m.bold.measureText("#") + m.regular.measureText("99%"))).toInt()
 
         var labelW = m.regular.measureText(" DDR")
-        for (l in FIXED_LABELS) labelW = max(labelW, m.bold.measureText(l))
+        for (l in rowLabels) labelW = max(labelW, m.bold.measureText(l))
         labelW = max(labelW, clusterW)
         valueX = ceil(max(labelW, pctRight.toFloat()) + gap).toInt()
 
@@ -106,8 +112,7 @@ class HudTextGrid(private val m: HudMetrics, clusterLabels: List<String>) {
 
     private companion object {
         // Gap between the label column and the value column, in em.
-        const val GAP_EM = 0.6f
-        val FIXED_LABELS = listOf("#RAM", "#GMEM", "#CPU", "#PWR", "#FPS")
+        const val GAP_EM = 0.3f
 
         // The widest value: sets the right edge of the whole text.
         const val WIDEST_VALUE = "8888MHz"
