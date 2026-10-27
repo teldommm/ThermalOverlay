@@ -413,9 +413,9 @@ class FloatMonitor(private val context: Context) {
         val dash = "--"
         val b = SpannableStringBuilder()
         b.append(whiteBoldSpan("#RAM  ${dash.padStart(4)}  ${dash.padStart(4)}")).append("\n")
-        if (rowDdr) b.append(" DDR  ${dash.padStart(4)}").append("\n")
-        if (rowGmem) b.append(whiteBoldSpan("#GMEM $dash")).append("\n")
-        b.append(whiteBoldSpan("#CPU  ${dash.padStart(6)}")).append("\n")
+        if (rowDdr) b.append(valueRow(LABEL_DDR, dash)).append("\n")
+        if (rowGmem) b.append(whiteBoldSpan(valueRow(LABEL_GMEM, dash))).append("\n")
+        b.append(whiteBoldSpan(valueRow(LABEL_CPU, dash))).append("\n")
         for ((i, cluster) in layoutHint.withIndex()) {
             if (cluster.isEmpty()) continue
             if (i != 0) b.append("\n")
@@ -424,8 +424,8 @@ class FloatMonitor(private val context: Context) {
                 b.append("\n").append(dash.padStart(4)).append("  ").append(dash.padStart(5))
             }
         }
-        if (rowPwr) b.append("\n").append(whiteBoldSpan("#PWR  ${dash.padStart(8)}"))
-        b.append("\n").append(whiteBoldSpan("#FPS  ${dash.padStart(5)}"))
+        if (rowPwr) b.append("\n").append(whiteBoldSpan(valueRow(LABEL_PWR, dash)))
+        b.append("\n").append(whiteBoldSpan(valueRow(LABEL_FPS, dash)))
         return b
     }
 
@@ -769,6 +769,14 @@ class FloatMonitor(private val context: Context) {
     // twitches on every update.
     private fun pct(v: Int): String = "$v%".padStart(4)
 
+    /**
+     * One "label + value" row. Every single-value row (DDR, GMEM, CPU temp,
+     * PWR, FPS) uses the same label width and the same right-aligned value
+     * width, so all of them end in the same column, which is also where the
+     * cluster header ("#0~3  1804MHz") ends.
+     */
+    private fun valueRow(label: String, value: String): String = label + value.padStart(VALUE_WIDTH)
+
     private fun buildDetails(
         scan: com.thermaloverlay.overlay.metrics.ClusterScan,
         clusterFreqs: List<Long>,
@@ -797,17 +805,17 @@ class FloatMonitor(private val context: Context) {
 
         if (ddrFreq.isNotEmpty()) rowDdr = true
         if (rowDdr) {
-            b.append(" DDR  " + ddrFreq.ifEmpty { "--" }.padStart(4))
+            b.append(valueRow(LABEL_DDR, ddrFreq.ifEmpty { "--" }))
             b.append("\n")
         }
 
         if (gpuMemoryUsage != null) rowGmem = true
         if (rowGmem) {
-            b.append(whiteBoldSpan("#GMEM " + (gpuMemoryUsage ?: "--")))
+            b.append(whiteBoldSpan(valueRow(LABEL_GMEM, gpuMemoryUsage ?: "--")))
             b.append("\n")
         }
 
-        b.append(whiteBoldSpan("#CPU  " + cachedTemp.padStart(6)))
+        b.append(whiteBoldSpan(valueRow(LABEL_CPU, cachedTemp)))
         b.append("\n")
 
         // Only reads the latest value; the stream itself is started by the
@@ -867,11 +875,11 @@ class FloatMonitor(private val context: Context) {
         if (powerText != null) rowPwr = true
         if (rowPwr) {
             b.append("\n")
-            b.append(whiteBoldSpan("#PWR  " + (powerText ?: "--").padStart(8)))
+            b.append(whiteBoldSpan(valueRow(LABEL_PWR, powerText ?: "--")))
         }
 
         b.append("\n")
-        b.append(whiteBoldSpan("#FPS  " + (lastFps ?: "--").padStart(5)))
+        b.append(whiteBoldSpan(valueRow(LABEL_FPS, lastFps ?: "--")))
         return b
     }
 
@@ -925,6 +933,15 @@ class FloatMonitor(private val context: Context) {
     }
 
     private companion object {
+        // Row labels are exactly 6 chars. VALUE_WIDTH = 7 fits the widest value
+        // of every row: "+12.34W" / "-100.0W", "1804MHz"-like text, "1234MB", "45.2°C".
+        const val LABEL_DDR = " DDR  "
+        const val LABEL_GMEM = "#GMEM "
+        const val LABEL_CPU = "#CPU  "
+        const val LABEL_PWR = "#PWR  "
+        const val LABEL_FPS = "#FPS  "
+        const val VALUE_WIDTH = 7
+
         const val POSITION_PREFS = "float_monitor_storage"
 
         // A touch shorter than this is a tap; two taps closer than this close the HUD.
