@@ -1,8 +1,8 @@
 <resources>
-    <!-- HUD ring states (CPU/GPU load, battery). Normal use is blue; idle is
-         light green; high load orange; critical red. Tuned for the slate HUD
-         background. Names are historical: low = idle, mid = normal. -->
-    <color name="color_load_low">#5FD98B</color>
+    <!-- Battery ring states. Normal is blue, a cold battery is a light ice
+         blue; warm / low charge orange; hot red. Tuned for the slate HUD
+         background. Names are historical: low = cold, mid = normal. -->
+    <color name="color_load_low">#7CC4FA</color>
     <color name="color_load_mid">#3B8CF5</color>
     <color name="color_load_hight">#FF9F3D</color>
     <color name="color_load_veryhight">#FF5D52</color>

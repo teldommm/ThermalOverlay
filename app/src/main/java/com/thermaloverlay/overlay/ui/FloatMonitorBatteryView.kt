@@ -25,8 +25,8 @@ class FloatMonitorBatteryView @JvmOverloads constructor(
 
     override fun colorFor(percent: Int): Int = when {
         temperature >= 48 || percent < 11 -> color(R.color.color_load_critical)
-        temperature > 44 || percent < 16 -> color(R.color.color_load_veryhight)
-        temperature > 41 || percent < 31 -> color(R.color.color_load_hight)
+        temperature > 45 || percent < 16 -> color(R.color.color_load_veryhight)
+        temperature > 42 || percent < 31 -> color(R.color.color_load_hight)
         temperature > 20 -> color(R.color.color_load_mid)
         else -> color(R.color.color_load_low)
     }
