@@ -112,7 +112,7 @@ class HudTextGrid(private val m: HudMetrics, clusterLabels: List<String>, rowLab
 
     private companion object {
         // Gap between the label column and the value column, in em.
-        const val GAP_EM = 0.3f
+        const val GAP_EM = 0.4f
 
         // The widest value: sets the right edge of the whole text.
         const val WIDEST_VALUE = "8888MHz"
