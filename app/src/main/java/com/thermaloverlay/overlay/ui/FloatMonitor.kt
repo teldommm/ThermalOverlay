@@ -16,20 +16,15 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.graphics.Point
-import android.graphics.Typeface
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
-import android.text.Spannable
-import android.text.SpannableString
-import android.text.SpannableStringBuilder
-import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.text.TextPaint
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -82,7 +77,7 @@ class FloatMonitor(private val context: Context) {
     private var showOtherInfo = false
 
     /** Main thread: last detailed text, shown at once when the view is opened again. */
-    private var lastDetails: CharSequence? = null
+    private var lastDetails: HudDetails? = null
 
     /** CPU groups seen by the last tick; lets the placeholder have the final shape. */
     @Volatile
@@ -111,6 +106,10 @@ class FloatMonitor(private val context: Context) {
 
 
     private var defaultInfoMinWidth = 0
+
+    // Paints of the detailed text view (set before the poller starts).
+    @Volatile
+    private var hudMetrics: HudMetrics? = null
 
     // The window starts fully transparent and is revealed by the first
     // snapshot (or after REVEAL_FALLBACK_MS), so the user never sees the
@@ -216,9 +215,9 @@ class FloatMonitor(private val context: Context) {
         if (storage.getBoolean(KEY_EXPANDED, false)) {
             showOtherInfo = true
             otherInfo?.let { tv ->
-                val text = buildPlaceholder()
-                tv.text = text
-                keepWidthMonotonic(text)
+                val d = buildPlaceholder()
+                tv.text = d.text
+                keepWidthMonotonic(d.width)
             }
             applyDetailedLayout()
         }
@@ -333,7 +332,10 @@ class FloatMonitor(private val context: Context) {
         chargerView = view.findViewById(R.id.fw_charger)
         otherInfo = view.findViewById(R.id.fw_other_info)
         chartList = view.findViewById(R.id.fw_chart_list)
-        otherInfo?.typeface = Typeface.MONOSPACE
+        // No monospace font: many ROMs map "monospace" to their proportional
+        // system font. The columns are pixel-measured (HudTextGrid), so
+        // whatever font the TextView really draws with is the one measured.
+        otherInfo?.let { hudMetrics = HudMetrics(it.paint) }
         defaultInfoMinWidth = otherInfo?.minWidth ?: 0
         return view
     }
@@ -357,9 +359,9 @@ class FloatMonitor(private val context: Context) {
             lastFps = null
             showOtherInfo = true
             otherInfo?.let { tv ->
-                val text = lastDetails ?: buildPlaceholder()
-                tv.text = text
-                keepWidthMonotonic(text)
+                val d = lastDetails ?: buildPlaceholder()
+                tv.text = d.text
+                keepWidthMonotonic(d.width)
             }
             applyDetailedLayout()
         }
@@ -408,25 +410,28 @@ class FloatMonitor(private val context: Context) {
         }
     }
 
-    /** Same rows and widths as [buildDetails], with "--" for every value. */
-    private fun buildPlaceholder(): CharSequence {
+    private fun newGrid(groups: List<List<Int>>): HudTextGrid {
+        val m = hudMetrics ?: HudMetrics(TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply { textSize = 20f })
+        val labels = groups.filter { it.isNotEmpty() }.map { "#${it.first()}~${it.last()}" }
+        return HudTextGrid(m, labels)
+    }
+
+    /** Same rows and columns as [buildDetails], with "--" for every value. */
+    private fun buildPlaceholder(): HudDetails {
         val dash = "--"
-        val b = SpannableStringBuilder()
-        b.append(whiteBoldSpan(ramRow(dash, dash))).append("\n")
-        if (rowDdr) b.append(valueRow(LABEL_DDR, dash)).append("\n")
-        if (rowGmem) b.append(whiteBoldSpan(valueRow(LABEL_GMEM, dash))).append("\n")
-        b.append(whiteBoldSpan(valueRow(LABEL_CPU, dash))).append("\n")
-        for ((i, cluster) in layoutHint.withIndex()) {
+        val g = newGrid(layoutHint)
+        g.ramRow(dash, dash)
+        if (rowDdr) g.mutedRow(LABEL_DDR, dash)
+        if (rowGmem) g.boldRow(LABEL_GMEM, dash)
+        g.boldRow(LABEL_CPU, dash)
+        for (cluster in layoutHint) {
             if (cluster.isEmpty()) continue
-            if (i != 0) b.append("\n")
-            b.append(whiteBoldSpan(clusterHeader(cluster.first(), cluster.last(), dash)))
-            repeat(cluster.size) {
-                b.append("\n").append(coreRow(dash, dash))
-            }
+            g.clusterHeader("#${cluster.first()}~${cluster.last()}", dash)
+            repeat(cluster.size) { g.coreRow(dash, dash) }
         }
-        if (rowPwr) b.append("\n").append(whiteBoldSpan(valueRow(LABEL_PWR, dash)))
-        b.append("\n").append(whiteBoldSpan(valueRow(LABEL_FPS, dash)))
-        return b
+        if (rowPwr) g.boldRow(LABEL_PWR, dash)
+        g.boldRow(LABEL_FPS, dash)
+        return g.build()
     }
 
     private fun applyDetailedLayout() {
@@ -693,15 +698,8 @@ class FloatMonitor(private val context: Context) {
         val batteryLevel: Int,
         val batteryTemp: Double,
         val charging: Boolean,
-        val details: CharSequence?,
+        val details: HudDetails?,
     )
-
-    private fun whiteBoldSpan(text: String): SpannableString {
-        return SpannableString(text).apply {
-            setSpan(ForegroundColorSpan(android.graphics.Color.WHITE), 0, text.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            setSpan(StyleSpan(Typeface.BOLD), 0, text.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-    }
 
     /** kHz -> whole MHz text, "--" if unknown. */
     private fun mhzText(khz: Long): String = if (khz > 0) (khz / 1000).toString() else "--"
@@ -764,44 +762,14 @@ class FloatMonitor(private val context: Context) {
         mainHandler.post { applySnapshot(snapshot) }
     }
 
-    // Fixed-width cells: a value changing from "9%" to "100%" or "--" to
-    // "1804M" must not change the width of its column, or the whole HUD
-    // twitches on every update.
     private fun pct(v: Int): String = "$v%"
-
-    /**
-     * One "label + value" row. Every single-value row (DDR, GMEM, CPU temp,
-     * PWR, FPS) has a 6-char label and its value starts in the same column,
-     * which is also where the cluster frequency and the per-core MHz start.
-     */
-    private fun valueRow(label: String, value: String): String = label + value.padEnd(VALUE_WIDTH)
-
-    /** "#RAM  47%  1%": RAM starts in the value column, swap ends at its right edge. */
-    private fun ramRow(ram: String, swap: String): String {
-        val gap = maxOf(1, VALUE_WIDTH - ram.length - swap.length)
-        return LABEL_RAM + ram + " ".repeat(gap) + swap
-    }
-
-    /** "#0~5  2496MHz": the label is padded to the value column, the frequency starts there. */
-    private fun clusterHeader(first: Int, last: Int, freq: String): String {
-        val label = "#$first~$last"
-        return label.padEnd(LABEL_WIDTH - 1) + " " + freq
-    }
-
-    /**
-     * One core: load right-aligned so it ends under the end of the "#0~5"
-     * label (never reaching the '#' below 100%), MHz left-aligned in the
-     * value column, under the cluster frequency.
-     */
-    private fun coreRow(load: String, mhz: String): String =
-        load.padStart(CORE_LOAD_WIDTH) + " ".repeat(LABEL_WIDTH - CORE_LOAD_WIDTH) + mhz
 
     private fun buildDetails(
         scan: com.thermaloverlay.overlay.metrics.ClusterScan,
         clusterFreqs: List<Long>,
         loads: Map<Int, Double>,
         preview: Boolean,
-    ): CharSequence {
+    ): HudDetails {
         activityManager.getMemoryInfo(memInfo)
         val totalMem = (memInfo.totalMem / 1024 / 1024f).toInt()
         val availMem = (memInfo.availMem / 1024 / 1024f).toInt()
@@ -818,28 +786,9 @@ class FloatMonitor(private val context: Context) {
         val swapPercent = cachedSwap
         val ddrFreq = cachedDdr
 
-        val b = SpannableStringBuilder()
-        b.append(whiteBoldSpan(ramRow("$ramPercent%", "$swapPercent%")))
-        b.append("\n")
-
+        // Rows that appeared once stay (as "--"), so the view never changes height by itself.
         if (ddrFreq.isNotEmpty()) rowDdr = true
-        if (rowDdr) {
-            b.append(valueRow(LABEL_DDR, ddrFreq.ifEmpty { "--" }))
-            b.append("\n")
-        }
-
         if (gpuMemoryUsage != null) rowGmem = true
-        if (rowGmem) {
-            b.append(whiteBoldSpan(valueRow(LABEL_GMEM, gpuMemoryUsage ?: "--")))
-            b.append("\n")
-        }
-
-        b.append(whiteBoldSpan(valueRow(LABEL_CPU, cachedTemp)))
-        b.append("\n")
-
-        // Only reads the latest value; the stream itself is started by the
-        // slow-sources thread.
-        val perCoreCycles = if (preview) null else CpuCyclesUtils.readLatest()
 
         // CPUs that belong to no known policy (a fully offline cluster) get a
         // group of their own, so they are visible even before the kernel
@@ -847,27 +796,32 @@ class FloatMonitor(private val context: Context) {
         val groups = ArrayList<List<Int>>(scan.clusters)
         if (scan.missing.isNotEmpty()) groups.add(scan.missing)
 
+        val g = newGrid(groups)
+        g.ramRow("$ramPercent%", "$swapPercent%")
+        if (rowDdr) g.mutedRow(LABEL_DDR, ddrFreq.ifEmpty { "--" })
+        if (rowGmem) g.boldRow(LABEL_GMEM, gpuMemoryUsage ?: "--")
+        g.boldRow(LABEL_CPU, cachedTemp)
+
+        // Only reads the latest value; the stream itself is started by the
+        // slow-sources thread.
+        val perCoreCycles = if (preview) null else CpuCyclesUtils.readLatest()
+
         for ((groupIndex, cluster) in groups.withIndex()) {
-            if (groupIndex != 0) b.append("\n")
             if (cluster.isEmpty()) continue
 
             val freqKhz = clusterFreqs.getOrNull(groupIndex) ?: -1L
             val freqText = if (freqKhz > 0) mhzText(freqKhz) + "MHz" else "--MHz"
-            b.append(whiteBoldSpan(clusterHeader(cluster.first(), cluster.last(), freqText)))
+            g.clusterHeader("#${cluster.first()}~${cluster.last()}", freqText)
 
-            val lines = StringBuilder()
             for (core in cluster) {
-                lines.append("\n")
                 val coreLoad = loads[core]
 
                 // null means the core is offline (it disappears from
                 // /proc/stat): show "×" in both columns, skip the freq read.
                 if (coreLoad == null) {
-                    lines.append(coreRow("×", "×"))
+                    g.coreRow("×", "×")
                     continue
                 }
-
-                val loadText = pct(coreLoad.toInt())
 
                 val cyclesMhz = perCoreCycles?.getOrNull(core)
                 val displayMhz = if (cyclesMhz != null && cyclesMhz > 0) {
@@ -878,9 +832,8 @@ class FloatMonitor(private val context: Context) {
                     val khz = if (preview) freqKhz else cpuFrequencyUtils.getCoreFrequencyKHz(core)
                     if (khz > 0) (khz / 1000).toInt() * coreLoad.toInt() / 100 else null
                 }
-                lines.append(coreRow(loadText, if (displayMhz != null) "${displayMhz}M" else "--"))
+                g.coreRow(pct(coreLoad.toInt()), if (displayMhz != null) "${displayMhz}M" else "--")
             }
-            b.append(lines.toString())
         }
 
         // Power, then FPS last. The FPS row is always there ("--" until the
@@ -889,14 +842,9 @@ class FloatMonitor(private val context: Context) {
         // then makes the whole view jump.
         val powerText = computePowerText()
         if (powerText != null) rowPwr = true
-        if (rowPwr) {
-            b.append("\n")
-            b.append(whiteBoldSpan(valueRow(LABEL_PWR, powerText ?: "--")))
-        }
-
-        b.append("\n")
-        b.append(whiteBoldSpan(valueRow(LABEL_FPS, lastFps ?: "--")))
-        return b
+        if (rowPwr) g.boldRow(LABEL_PWR, powerText ?: "--")
+        g.boldRow(LABEL_FPS, lastFps ?: "--")
+        return g.build()
     }
 
     /** Battery power as text ("+3.20W"), or null when current/voltage are unusable. */
@@ -912,11 +860,9 @@ class FloatMonitor(private val context: Context) {
     }
 
     /** The detailed text only ever gets wider while shown, so it can't wobble. */
-    private fun keepWidthMonotonic(text: CharSequence) {
+    private fun keepWidthMonotonic(contentWidth: Int) {
         val tv = otherInfo ?: return
-        var widest = 0f
-        for (line in text.toString().split('\n')) widest = max(widest, tv.paint.measureText(line))
-        val needed = ceil(widest).toInt() + tv.paddingLeft + tv.paddingRight
+        val needed = contentWidth + tv.paddingLeft + tv.paddingRight
         if (needed > tv.minWidth) tv.minWidth = needed
     }
 
@@ -941,27 +887,19 @@ class FloatMonitor(private val context: Context) {
         if (s.details != null) {
             lastDetails = s.details
             if (showOtherInfo) {
-                otherInfo?.text = s.details
-                keepWidthMonotonic(s.details)
+                otherInfo?.text = s.details.text
+                keepWidthMonotonic(s.details.width)
             }
         }
         revealIfPending()
     }
 
     private companion object {
-        // Row labels are exactly 6 chars. VALUE_WIDTH = 7 fits the widest value
-        // of every row: "+12.34W" / "-100.0W", "1804MHz"-like text, "1234MB", "45.2°C".
-        const val LABEL_RAM = "#RAM  "
-        const val LABEL_DDR = " DDR  "
-        const val LABEL_GMEM = "#GMEM "
-        const val LABEL_CPU = "#CPU  "
-        const val LABEL_PWR = "#PWR  "
-        const val LABEL_FPS = "#FPS  "
-        const val LABEL_WIDTH = 6
-        const val VALUE_WIDTH = 7
-
-        // Core load column: ends at the end of "#0~5" (4 chars).
-        const val CORE_LOAD_WIDTH = 4
+        const val LABEL_DDR = " DDR"
+        const val LABEL_GMEM = "#GMEM"
+        const val LABEL_CPU = "#CPU"
+        const val LABEL_PWR = "#PWR"
+        const val LABEL_FPS = "#FPS"
 
         const val POSITION_PREFS = "float_monitor_storage"
 

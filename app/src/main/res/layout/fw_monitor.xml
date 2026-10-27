@@ -164,7 +164,5 @@
         android:text="@string/hud_loading"
         android:textColor="@color/hud_text_muted"
         android:textSize="7dp"
-        android:textStyle="bold"
-        android:typeface="monospace"
         android:visibility="gone" />
 </LinearLayout>
