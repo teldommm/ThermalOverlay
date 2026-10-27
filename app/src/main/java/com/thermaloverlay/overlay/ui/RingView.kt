@@ -10,6 +10,8 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
+import androidx.core.content.ContextCompat
+import com.thermaloverlay.overlay.R
 
 abstract class RingView @JvmOverloads constructor(
     context: Context,
@@ -24,7 +26,7 @@ abstract class RingView @JvmOverloads constructor(
 
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = TRACK_COLOR
+        color = ContextCompat.getColor(context, R.color.hud_ring_track)
     }
     private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -63,9 +65,5 @@ abstract class RingView @JvmOverloads constructor(
         arcPaint.color = colorFor(percent)
         val sweep = if (percent >= 98) 360f else percent * 3.6f
         canvas.drawArc(oval, -90f, sweep, false, arcPaint)
-    }
-
-    private companion object {
-        const val TRACK_COLOR = 0x22FFFFFF
     }
 }

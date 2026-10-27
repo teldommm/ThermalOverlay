@@ -412,16 +412,16 @@ class FloatMonitor(private val context: Context) {
     private fun buildPlaceholder(): CharSequence {
         val dash = "--"
         val b = SpannableStringBuilder()
-        b.append(whiteBoldSpan("#RAM  ${dash.padStart(4)}  ${dash.padStart(4)}")).append("\n")
+        b.append(whiteBoldSpan(ramRow(dash, dash))).append("\n")
         if (rowDdr) b.append(valueRow(LABEL_DDR, dash)).append("\n")
         if (rowGmem) b.append(whiteBoldSpan(valueRow(LABEL_GMEM, dash))).append("\n")
         b.append(whiteBoldSpan(valueRow(LABEL_CPU, dash))).append("\n")
         for ((i, cluster) in layoutHint.withIndex()) {
             if (cluster.isEmpty()) continue
             if (i != 0) b.append("\n")
-            b.append(whiteBoldSpan("#${cluster.first()}~${cluster.last()}  ${dash.padStart(4)}MHz"))
+            b.append(whiteBoldSpan(clusterHeader(cluster.first(), cluster.last(), dash)))
             repeat(cluster.size) {
-                b.append("\n").append(dash.padStart(4)).append("  ").append(dash.padStart(5))
+                b.append("\n").append(coreRow(dash, dash))
             }
         }
         if (rowPwr) b.append("\n").append(whiteBoldSpan(valueRow(LABEL_PWR, dash)))
@@ -767,15 +767,34 @@ class FloatMonitor(private val context: Context) {
     // Fixed-width cells: a value changing from "9%" to "100%" or "--" to
     // "1804M" must not change the width of its column, or the whole HUD
     // twitches on every update.
-    private fun pct(v: Int): String = "$v%".padStart(4)
+    private fun pct(v: Int): String = "$v%"
 
     /**
      * One "label + value" row. Every single-value row (DDR, GMEM, CPU temp,
-     * PWR, FPS) uses the same label width and the same right-aligned value
-     * width, so all of them end in the same column, which is also where the
-     * cluster header ("#0~3  1804MHz") ends.
+     * PWR, FPS) has a 6-char label and its value starts in the same column,
+     * which is also where the cluster frequency and the per-core MHz start.
      */
-    private fun valueRow(label: String, value: String): String = label + value.padStart(VALUE_WIDTH)
+    private fun valueRow(label: String, value: String): String = label + value.padEnd(VALUE_WIDTH)
+
+    /** "#RAM  47%  1%": RAM starts in the value column, swap ends at its right edge. */
+    private fun ramRow(ram: String, swap: String): String {
+        val gap = maxOf(1, VALUE_WIDTH - ram.length - swap.length)
+        return LABEL_RAM + ram + " ".repeat(gap) + swap
+    }
+
+    /** "#0~5  2496MHz": the label is padded to the value column, the frequency starts there. */
+    private fun clusterHeader(first: Int, last: Int, freq: String): String {
+        val label = "#$first~$last"
+        return label.padEnd(LABEL_WIDTH - 1) + " " + freq
+    }
+
+    /**
+     * One core: load right-aligned so it ends under the end of the "#0~5"
+     * label (never reaching the '#' below 100%), MHz left-aligned in the
+     * value column, under the cluster frequency.
+     */
+    private fun coreRow(load: String, mhz: String): String =
+        load.padStart(CORE_LOAD_WIDTH) + " ".repeat(LABEL_WIDTH - CORE_LOAD_WIDTH) + mhz
 
     private fun buildDetails(
         scan: com.thermaloverlay.overlay.metrics.ClusterScan,
@@ -800,7 +819,7 @@ class FloatMonitor(private val context: Context) {
         val ddrFreq = cachedDdr
 
         val b = SpannableStringBuilder()
-        b.append(whiteBoldSpan("#RAM  ${pct(ramPercent)}  ${pct(swapPercent)}"))
+        b.append(whiteBoldSpan(ramRow("$ramPercent%", "$swapPercent%")))
         b.append("\n")
 
         if (ddrFreq.isNotEmpty()) rowDdr = true
@@ -833,11 +852,8 @@ class FloatMonitor(private val context: Context) {
             if (cluster.isEmpty()) continue
 
             val freqKhz = clusterFreqs.getOrNull(groupIndex) ?: -1L
-            b.append(
-                whiteBoldSpan(
-                    "#" + cluster.first() + "~" + cluster.last() + "  " + mhzText(freqKhz).padStart(4) + "MHz"
-                )
-            )
+            val freqText = if (freqKhz > 0) mhzText(freqKhz) + "MHz" else "--MHz"
+            b.append(whiteBoldSpan(clusterHeader(cluster.first(), cluster.last(), freqText)))
 
             val lines = StringBuilder()
             for (core in cluster) {
@@ -847,11 +863,11 @@ class FloatMonitor(private val context: Context) {
                 // null means the core is offline (it disappears from
                 // /proc/stat): show "×" in both columns, skip the freq read.
                 if (coreLoad == null) {
-                    lines.append("×".padStart(4)).append("  ").append("×".padStart(5))
+                    lines.append(coreRow("×", "×"))
                     continue
                 }
 
-                lines.append(pct(coreLoad.toInt())).append("  ")
+                val loadText = pct(coreLoad.toInt())
 
                 val cyclesMhz = perCoreCycles?.getOrNull(core)
                 val displayMhz = if (cyclesMhz != null && cyclesMhz > 0) {
@@ -862,7 +878,7 @@ class FloatMonitor(private val context: Context) {
                     val khz = if (preview) freqKhz else cpuFrequencyUtils.getCoreFrequencyKHz(core)
                     if (khz > 0) (khz / 1000).toInt() * coreLoad.toInt() / 100 else null
                 }
-                lines.append((if (displayMhz != null) "${displayMhz}M" else "--").padStart(5))
+                lines.append(coreRow(loadText, if (displayMhz != null) "${displayMhz}M" else "--"))
             }
             b.append(lines.toString())
         }
@@ -935,12 +951,17 @@ class FloatMonitor(private val context: Context) {
     private companion object {
         // Row labels are exactly 6 chars. VALUE_WIDTH = 7 fits the widest value
         // of every row: "+12.34W" / "-100.0W", "1804MHz"-like text, "1234MB", "45.2°C".
+        const val LABEL_RAM = "#RAM  "
         const val LABEL_DDR = " DDR  "
         const val LABEL_GMEM = "#GMEM "
         const val LABEL_CPU = "#CPU  "
         const val LABEL_PWR = "#PWR  "
         const val LABEL_FPS = "#FPS  "
+        const val LABEL_WIDTH = 6
         const val VALUE_WIDTH = 7
+
+        // Core load column: ends at the end of "#0~5" (4 chars).
+        const val CORE_LOAD_WIDTH = 4
 
         const val POSITION_PREFS = "float_monitor_storage"
 

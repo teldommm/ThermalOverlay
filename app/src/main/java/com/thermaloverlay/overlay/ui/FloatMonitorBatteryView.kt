@@ -4,7 +4,6 @@
 package com.thermaloverlay.overlay.ui
 
 import android.content.Context
-import android.graphics.Color
 import android.util.AttributeSet
 import androidx.core.content.ContextCompat
 import com.thermaloverlay.overlay.R
@@ -25,7 +24,7 @@ class FloatMonitorBatteryView @JvmOverloads constructor(
     }
 
     override fun colorFor(percent: Int): Int = when {
-        temperature >= 48 || percent < 11 -> Color.rgb(255, 15, 0)
+        temperature >= 48 || percent < 11 -> color(R.color.color_load_critical)
         temperature > 44 || percent < 16 -> color(R.color.color_load_veryhight)
         temperature > 41 || percent < 31 -> color(R.color.color_load_hight)
         temperature > 20 -> color(R.color.color_load_mid)

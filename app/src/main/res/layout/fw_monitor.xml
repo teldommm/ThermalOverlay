@@ -37,7 +37,7 @@
                     android:gravity="center"
                     android:text="@string/hud_cpu"
                     android:textAlignment="center"
-                    android:textColor="#ffffff"
+                    android:textColor="@color/hud_text_primary"
                     android:textSize="7.3dp"
                     android:textStyle="bold" />
             </FrameLayout>
@@ -51,9 +51,9 @@
                 android:layout_marginBottom="1dp"
                 android:text="0MHz"
                 android:textAlignment="center"
-                android:textColor="#ffffff"
+                android:textColor="@color/hud_text_secondary"
                 android:textSize="5.6dp"
-                android:textStyle="bold" />
+                android:textStyle="normal" />
         </LinearLayout>
 
         <LinearLayout
@@ -81,7 +81,7 @@
                     android:text="@string/hud_gpu"
                     android:textAlignment="center"
                     android:textAllCaps="false"
-                    android:textColor="#ffffff"
+                    android:textColor="@color/hud_text_primary"
                     android:textSize="7.3dp"
                     android:textStyle="bold" />
             </FrameLayout>
@@ -94,9 +94,9 @@
                     android:gravity="center"
                 android:layout_marginBottom="1dp"
                 android:text="0MHz"
-                android:textColor="#ffffff"
+                android:textColor="@color/hud_text_secondary"
                 android:textSize="5.6dp"
-                android:textStyle="bold" />
+                android:textStyle="normal" />
         </LinearLayout>
 
         <LinearLayout
@@ -134,7 +134,7 @@
                     android:gravity="center"
                     android:text="--%"
                     android:textAlignment="center"
-                    android:textColor="#ffffff"
+                    android:textColor="@color/hud_text_primary"
                     android:textSize="7.3dp"
                     android:textStyle="bold" />
             </FrameLayout>
@@ -147,9 +147,9 @@
                     android:gravity="center"
                 android:layout_marginBottom="1dp"
                 android:text="--°C"
-                android:textColor="#ffffff"
+                android:textColor="@color/hud_text_secondary"
                 android:textSize="5.6dp"
-                android:textStyle="bold" />
+                android:textStyle="normal" />
         </LinearLayout>
     </LinearLayout>
 
@@ -162,7 +162,7 @@
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
         android:text="@string/hud_loading"
-        android:textColor="#bbffffff"
+        android:textColor="@color/hud_text_muted"
         android:textSize="7dp"
         android:textStyle="bold"
         android:typeface="monospace"
