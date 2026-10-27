@@ -67,7 +67,9 @@ class HudTextGrid(private val m: HudMetrics, clusterLabels: List<String>, rowLab
         labelW = max(labelW, clusterW)
         valueX = ceil(max(labelW, pctRight.toFloat()) + gap).toInt()
 
-        valueRight = valueX + ceil(m.bold.measureText(WIDEST_VALUE)).toInt()
+        // The swap % is nudged right of the value column's edge; the HUD grows by the same amount.
+        valueRight = valueX + ceil(m.bold.measureText(WIDEST_VALUE)).toInt() +
+            ceil(m.bold.textSize * SWAP_SHIFT_EM).toInt()
     }
 
     fun build(): HudDetails = HudDetails(sb, valueRight)
@@ -113,6 +115,9 @@ class HudTextGrid(private val m: HudMetrics, clusterLabels: List<String>, rowLab
     private companion object {
         // Gap between the label column and the value column, in em.
         const val GAP_EM = 0.4f
+
+        // How far the swap % sits to the right of the end of the widest value, in em.
+        const val SWAP_SHIFT_EM = 0.8f
 
         // The widest value: sets the right edge of the whole text.
         const val WIDEST_VALUE = "8888MHz"

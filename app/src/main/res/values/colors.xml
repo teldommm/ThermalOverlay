@@ -9,7 +9,8 @@
     <color name="color_load_critical">#FF3B30</color>
 
     <!-- HUD surface and text -->
-    <color name="hud_bg">#F0393E46</color>
+    <color name="hud_bg">#CC393E46</color>
+    <color name="hud_stroke">#B3262A31</color>
     <color name="hud_ring_track">#6B7078</color>
     <color name="hud_text_primary">#FFFFFF</color>
     <color name="hud_text_secondary">#B9BEC5</color>
