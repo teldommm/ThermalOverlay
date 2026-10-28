@@ -4,6 +4,7 @@
  */
 package com.thermaloverlay.overlay.metrics
 
+import android.os.SystemClock
 import com.thermaloverlay.overlay.shell.KeepShell
 import com.thermaloverlay.overlay.shell.KeepShellPublic
 import com.thermaloverlay.overlay.shell.RootFile
@@ -19,12 +20,12 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
     private val fpsgoStatusPath = "/sys/kernel/fpsgo/fstb/fpsgo_status"
     private var hasFpsgo: Boolean? = null
 
-    private var fpsCommand2 = "service call SurfaceFlinger 1013"
-    private var lastTime = -1L
-    private var lastFrames = -1
-
     @Volatile
     private var probing = false
+
+    // Earliest time a probe that failed (shell error, not "no node") may rerun.
+    @Volatile
+    private var probeRetryAt = 0L
 
     val currentFps: String?
         get() {
@@ -45,32 +46,12 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
                 return fmt(it)
             }
 
-            if (fpsCommand2.isNotEmpty()) {
-                val result = keepShell.doCmdSync(fpsCommand2).trim()
-                if (result != KeepShell.ERROR && !result.contains("Parcel")) {
-                    fpsCommand2 = ""
-                } else {
-                    try {
-                        val index = result.indexOf("(") + 1
-                        val frames = Integer.parseInt(result.substring(index, index + 8), 16)
-                        val time = System.currentTimeMillis()
-                        var fps = 0f
-                        if (lastTime > 0 && lastFrames > 0) {
-                            fps = (frames - lastFrames) * 1000.0f / (time - lastTime)
-                        }
-                        lastFrames = frames
-                        lastTime = time
-                        return fmt(fps)
-                    } catch (ex: Exception) {
-                        if (!(lastTime > 0 && lastFrames > 0)) {
-                            fpsCommand2 = ""
-                        }
-                    }
-                }
-            }
-
             return null
         }
+
+    private companion object {
+        const val PROBE_RETRY_MS = 30_000L
+    }
 
     private fun fmt(v: Float): String = String.format(Locale.US, "%.1f", v)
 
@@ -88,18 +69,27 @@ class FpsUtils(private val keepShell: KeepShell = KeepShellPublic.secondaryKeepS
         }
         // Slow whole-/sys search: run it once in the background on its own
         // shell (with a generous timeout) so it never stalls the HUD.
-        if (probing) return
+        if (probing || SystemClock.elapsedRealtime() < probeRetryAt) return
         probing = true
         Thread({
             val probeShell = KeepShell()
             try {
-                var found = firstCrtcMatch(probeShell.doCmdSync("find /sys -name measured_fps 2>/dev/null", KeepShell.LONG_TIMEOUT_MS))
+                val first = probeShell.doCmdSync("find /sys -name measured_fps 2>/dev/null", KeepShell.LONG_TIMEOUT_MS)
+                var failed = first == KeepShell.ERROR
+                var found = if (failed) null else firstCrtcMatch(first)
                 if (found == null) {
-                    found = firstCrtcMatch(probeShell.doCmdSync("find /sys -name fps 2>/dev/null", KeepShell.LONG_TIMEOUT_MS))
+                    val second = probeShell.doCmdSync("find /sys -name fps 2>/dev/null", KeepShell.LONG_TIMEOUT_MS)
+                    if (second == KeepShell.ERROR) failed = true else found = firstCrtcMatch(second)
                 }
-                fpsFilePath = found ?: ""
+                when {
+                    found != null -> fpsFilePath = found
+                    // The shell failed: that is not "no such node". Leave the
+                    // path unresolved and try again after a pause.
+                    failed -> probeRetryAt = SystemClock.elapsedRealtime() + PROBE_RETRY_MS
+                    else -> fpsFilePath = ""
+                }
             } catch (ex: Exception) {
-                fpsFilePath = ""
+                probeRetryAt = SystemClock.elapsedRealtime() + PROBE_RETRY_MS
             } finally {
                 probeShell.tryExit()
                 probing = false

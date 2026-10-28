@@ -88,8 +88,9 @@ class OverlayService : Service() {
         Thread({
             try {
                 Thread.sleep(3000)
-                RootState.ensureBackgroundExemptions(this)
-                OverlayPrefs.setBackgroundExemptDone(this)
+                if (RootState.ensureBackgroundExemptions(this)) {
+                    OverlayPrefs.setBackgroundExemptDone(this)
+                }
             } catch (ignored: Exception) {
             }
         }, "OverlayBgExempt").start()

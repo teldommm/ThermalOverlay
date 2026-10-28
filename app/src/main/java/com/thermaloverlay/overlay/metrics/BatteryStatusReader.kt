@@ -37,29 +37,30 @@ object BatteryStatusReader {
         }
 
         val currentNow = batteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
-        when (batteryStatus) {
-            BatteryManager.BATTERY_STATUS_DISCHARGING -> {
-                currentUnitDivisor = when {
-                    currentNow > 20000 -> -1000
-                    currentNow < -20000 -> 1000
-                    currentNow > 0 -> -1
-                    else -> 1
-                }
-                divisorCalibrated = true
-            }
-            BatteryManager.BATTERY_STATUS_CHARGING -> {
-                currentUnitDivisor = when {
-                    currentNow > 20000 -> 1000
-                    currentNow < -20000 -> -1000
-                    currentNow > 0 -> 1
-                    else -> -1
-                }
-                divisorCalibrated = true
-            }
-            else -> {
-                // Not charging/discharging yet: keep the default and calibrate later.
-            }
+        val abs = kotlin.math.abs(currentNow)
+
+        // |value| >= 20000: certainly microamps. Smaller values are ambiguous
+        // (mA device, or µA device at a trickle charge), so they are only
+        // trusted as mA while discharging with a plausible load (>= 100 mA).
+        val isMicro = abs >= 20000
+        val isMilli = !isMicro && abs >= 100 &&
+            batteryStatus == BatteryManager.BATTERY_STATUS_DISCHARGING
+        if (!isMicro && !isMilli) return // ambiguous: calibrate on a later tick
+
+        // Sign convention: charging must come out positive.
+        val positiveMeansCharging = when (batteryStatus) {
+            BatteryManager.BATTERY_STATUS_CHARGING -> currentNow > 0
+            BatteryManager.BATTERY_STATUS_DISCHARGING -> currentNow < 0
+            else -> return
         }
+        val unit = if (isMicro) 1000 else 1
+        currentUnitDivisor = if (positiveMeansCharging) unit else -unit
+        divisorCalibrated = true
+    }
+
+    /** Called when a power reading came out implausible; recalibrates on the next tick. */
+    fun invalidateCalibration() {
+        divisorCalibrated = false
     }
 
     private var lastUpdateTime = 0L

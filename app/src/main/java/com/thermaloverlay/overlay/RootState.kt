@@ -9,6 +9,7 @@ package com.thermaloverlay.overlay
 
 import android.content.Context
 import android.provider.Settings
+import com.thermaloverlay.overlay.shell.KeepShell
 import com.thermaloverlay.overlay.shell.KeepShellPublic
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,19 +61,21 @@ object RootState {
     /**
      * Asks the system to leave the app alone in the background: out of Doze /
      * battery optimisation and allowed to run in the background. Root can set
-     * both directly. Blocking, never on the main thread. Idempotent; the
-     * caller remembers that it was done.
+     * both directly. Blocking, never on the main thread. Idempotent. Returns
+     * true only if the commands were actually run, so the caller records
+     * "done" only then.
      */
-    fun ensureBackgroundExemptions(context: Context) {
-        if (!isGranted) return
+    fun ensureBackgroundExemptions(context: Context): Boolean {
+        if (!isGranted) return false
         val pkg = context.packageName
-        try {
+        return try {
             KeepShellPublic.doCmdSync(
                 "dumpsys deviceidle whitelist +$pkg >/dev/null 2>&1; " +
                     "appops set $pkg RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1; " +
                     "appops set $pkg RUN_IN_BACKGROUND allow >/dev/null 2>&1"
-            )
+            ) != KeepShell.ERROR
         } catch (ignored: Exception) {
+            false
         }
     }
 }

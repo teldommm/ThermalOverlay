@@ -907,7 +907,11 @@ class FloatMonitor(private val context: Context) {
         val multiplier = if (OverlayPrefs.isDualBattery(context)) 2 else 1
         val ma = (currentNow / BatteryStatusReader.currentUnitDivisor) * multiplier
         val volts = BatteryStatusReader.batteryVoltage
-        if (ma <= -20000 || ma >= 20000 || volts <= 0) return null
+        if (ma <= -20000 || ma >= 20000 || volts <= 0) {
+            // Implausible value: the unit divisor was probably calibrated wrongly.
+            if (volts > 0) BatteryStatusReader.invalidateCalibration()
+            return null
+        }
         val watts = (ma * volts) / 1000.0
         val pattern = if (abs(watts) >= 100) "%+.1fW" else "%+.2fW"
         return String.format(Locale.US, pattern, watts)
